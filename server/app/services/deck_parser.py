@@ -44,7 +44,7 @@ class DeckParserService:
             from app.services.storage_service import StorageService
 
             storage = StorageService()
-            deck_id = uuid.uuid4()
+            deck_id = str(uuid.uuid4())
             file_key = f"decks/{deck_id}/{filename}"
             await storage.upload(file_key, file_bytes, self._content_type(filename))
 

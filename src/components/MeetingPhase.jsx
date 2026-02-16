@@ -25,6 +25,9 @@ export default function MeetingPhase() {
   const [started, setStarted] = useState(false);
   const [videoStream, setVideoStream] = useState(null);
   const [chatInput, setChatInput] = useState('');
+  const [sidebarTab, setSidebarTab] = useState('participants');
+  const [captionsOn, setCaptionsOn] = useState(false);
+  const [captionText, setCaptionText] = useState('');
   const chatRef = useRef(null);
   const timerRef = useRef(null);
   const socketRef = useRef(null);
@@ -92,7 +95,7 @@ export default function MeetingPhase() {
 
     // Socket event listeners
     socket.on('transcript_segment', (segment) => {
-      // Transcript segments are shown as real-time captions (not chat messages)
+      setCaptionText(segment.text || '');
     });
 
     socket.on('agent_question', (data) => {
@@ -326,6 +329,17 @@ export default function MeetingPhase() {
           </div>
           <span className="text-gray-500 text-xs">|</span>
           <span className="text-gray-300 text-sm font-mono">{formatTime(elapsedTime)}</span>
+          <span className="text-gray-500 text-xs">|</span>
+          <button
+            onClick={() => setCaptionsOn((v) => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+              captionsOn
+                ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/40'
+                : 'bg-gray-800 text-gray-500 hover:text-gray-300 border border-gray-700'
+            }`}
+          >
+            CC
+          </button>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-gray-500 text-xs">
@@ -343,108 +357,132 @@ export default function MeetingPhase() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Video Grid + Slides */}
-        <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
-          <div className="grid grid-cols-3 gap-3">
-            <PresenterTile isRecording={isRecording} isMuted={isMuted} videoStream={videoStream} />
-            {AGENTS.slice(0, 2).map((agent) => (
-              <AgentTile
-                key={agent.id}
-                agent={agent}
-                isActive={activeSpeaker === agent.id}
-                isSpeaking={activeSpeaker === agent.id}
-                hasHandRaised={handsRaised.includes(agent.id)}
-              />
-            ))}
+        {/* Left: Presentation Area */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Slide Display */}
+          <div className="flex-1 p-4 overflow-y-auto">
+            <SlideViewer
+              currentSlide={currentSlide}
+              totalSlides={totalSlides}
+              onNext={() => handleSlideChange(Math.min(totalSlides - 1, currentSlide + 1))}
+              onPrev={() => handleSlideChange(Math.max(0, currentSlide - 1))}
+              slides={slides}
+              deckId={deckId}
+              captionText={captionsOn ? captionText : ''}
+            />
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            {AGENTS.slice(2).map((agent) => (
-              <AgentTile
-                key={agent.id}
-                agent={agent}
-                isActive={activeSpeaker === agent.id}
-                isSpeaking={activeSpeaker === agent.id}
-                hasHandRaised={handsRaised.includes(agent.id)}
-              />
-            ))}
-            <div className="col-span-1 flex items-center justify-center gap-3">
-              <button
-                onClick={handleMuteToggle}
-                className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all ${
-                  isMuted
-                    ? 'bg-red-600 text-white'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                }`}
-              >
-                {isMuted ? '🔇' : '🎤'}
-              </button>
-              <button
-                onClick={handleCameraToggle}
-                className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all ${
-                  !isCameraOn
-                    ? 'bg-red-600 text-white'
-                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                }`}
-              >
-                📹
-              </button>
-              <button className="w-12 h-12 rounded-full bg-gray-800 text-gray-300 hover:bg-gray-700 flex items-center justify-center text-lg transition-all">
-                🖥
-              </button>
-            </div>
+          {/* Bottom Controls */}
+          <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800 bg-gray-900/50 flex items-center justify-center gap-3">
+            <button
+              onClick={handleMuteToggle}
+              className={`w-10 h-10 rounded-full flex items-center justify-center text-base transition-all ${
+                isMuted
+                  ? 'bg-red-600 text-white'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              {isMuted ? '🔇' : '🎤'}
+            </button>
+            <button
+              onClick={handleCameraToggle}
+              className={`w-10 h-10 rounded-full flex items-center justify-center text-base transition-all ${
+                !isCameraOn
+                  ? 'bg-red-600 text-white'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              📹
+            </button>
           </div>
-
-          <SlideViewer
-            currentSlide={currentSlide}
-            totalSlides={totalSlides}
-            onNext={() => handleSlideChange(Math.min(totalSlides - 1, currentSlide + 1))}
-            onPrev={() => handleSlideChange(Math.max(0, currentSlide - 1))}
-            slides={slides}
-            deckId={deckId}
-          />
         </div>
 
-        {/* Right: Chat Panel */}
-        <div className="w-96 bg-gray-900/50 border-l border-gray-800 flex flex-col flex-shrink-0">
-          <div className="px-4 py-3 border-b border-gray-800">
-            <div className="text-white font-semibold text-sm">Meeting Chat</div>
-            <div className="text-gray-500 text-xs">{messages.length} messages</div>
+        {/* Right: Tabbed Sidebar */}
+        <div className="w-72 bg-gray-900/50 border-l border-gray-800 flex flex-col flex-shrink-0">
+          {/* Tab Row */}
+          <div className="flex border-b border-gray-800 flex-shrink-0">
+            <button
+              onClick={() => setSidebarTab('participants')}
+              className={`flex-1 px-3 py-3 text-xs font-semibold transition-colors ${
+                sidebarTab === 'participants'
+                  ? 'text-white border-b-2 border-indigo-500'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Participants
+            </button>
+            <button
+              onClick={() => setSidebarTab('chat')}
+              className={`flex-1 px-3 py-3 text-xs font-semibold transition-colors relative ${
+                sidebarTab === 'chat'
+                  ? 'text-white border-b-2 border-indigo-500'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Chat
+              {messages.length > 0 && sidebarTab !== 'chat' && (
+                <span className="absolute top-2 right-3 w-4 h-4 rounded-full bg-indigo-500 text-white text-[10px] flex items-center justify-center">
+                  {messages.length > 9 ? '9+' : messages.length}
+                </span>
+              )}
+            </button>
           </div>
-          <div ref={chatRef} className="flex-1 overflow-y-auto py-2 space-y-1">
-            {messages.length === 0 ? (
-              <div className="text-gray-600 text-sm text-center py-8">
-                Waiting for session to begin...
-              </div>
-            ) : (
-              messages.map((msg, i) => (
-                <ChatMessage
-                  key={i}
-                  agent={msg.agent}
-                  message={msg.text}
-                  timestamp={msg.time}
-                  audioUrl={msg.audioUrl}
+
+          {/* Tab Content */}
+          {sidebarTab === 'participants' ? (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {/* Presenter Tile */}
+              <PresenterTile isRecording={isRecording} isMuted={isMuted} videoStream={videoStream} />
+              {/* Agent Tiles */}
+              {AGENTS.map((agent) => (
+                <AgentTile
+                  key={agent.id}
+                  agent={agent}
+                  isActive={activeSpeaker === agent.id}
+                  isSpeaking={activeSpeaker === agent.id}
+                  hasHandRaised={handsRaised.includes(agent.id)}
+                  compact
                 />
-              ))
-            )}
-          </div>
-          <div className="p-3 border-t border-gray-800">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type a response..."
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
-              />
-              <button
-                onClick={handleSendChat}
-                className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition-colors"
-              >
-                Send
-              </button>
+              ))}
             </div>
-          </div>
+          ) : (
+            <>
+              <div ref={chatRef} className="flex-1 overflow-y-auto py-2 space-y-1">
+                {messages.length === 0 ? (
+                  <div className="text-gray-600 text-sm text-center py-8">
+                    Waiting for session to begin...
+                  </div>
+                ) : (
+                  messages.map((msg, i) => (
+                    <ChatMessage
+                      key={i}
+                      agent={msg.agent}
+                      message={msg.text}
+                      timestamp={msg.time}
+                      audioUrl={msg.audioUrl}
+                    />
+                  ))
+                )}
+              </div>
+              <div className="p-3 border-t border-gray-800 flex-shrink-0">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a response..."
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  <button
+                    onClick={handleSendChat}
+                    className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition-colors"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

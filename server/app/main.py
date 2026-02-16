@@ -87,4 +87,4 @@ async def serve_file(file_path: str):
 
 
 # Mount Socket.IO as ASGI sub-app
-socket_app = socketio.ASGIApp(sio, other_app=app)
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app)

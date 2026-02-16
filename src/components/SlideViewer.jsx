@@ -1,20 +1,20 @@
 import React from 'react';
 import { DEMO_SLIDES } from '../utils/constants';
 
-export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev, slides, deckId }) {
+export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev, slides, deckId, captionText }) {
   // Use real slides from deck manifest if available, otherwise fallback to demo
   const slideData = slides && slides.length > 0 ? slides[currentSlide] : DEMO_SLIDES[currentSlide];
   const hasThumbnail = slideData && deckId && slideData.thumbnail_url;
 
   return (
-    <div className="bg-gray-900/80 backdrop-blur rounded-2xl border border-gray-700/50 overflow-hidden">
-      <div className="bg-gradient-to-r from-gray-800 to-gray-850 px-4 py-2 flex items-center justify-between border-b border-gray-700/50">
+    <div className="bg-gray-900/80 backdrop-blur rounded-2xl border border-gray-700/50 overflow-hidden flex flex-col h-full">
+      <div className="bg-gradient-to-r from-gray-800 to-gray-850 px-4 py-2 flex items-center justify-between border-b border-gray-700/50 flex-shrink-0">
         <span className="text-gray-400 text-xs font-medium">SLIDES</span>
         <span className="text-gray-500 text-xs">
           {currentSlide + 1} / {totalSlides}
         </span>
       </div>
-      <div className="p-6 min-h-[200px] bg-gradient-to-br from-gray-900 via-gray-900 to-blue-950/30">
+      <div className="p-6 flex-1 bg-gradient-to-br from-gray-900 via-gray-900 to-blue-950/30 overflow-y-auto">
         {hasThumbnail ? (
           <img
             src={slideData.thumbnail_url}
@@ -47,7 +47,12 @@ export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev,
           <div className="text-gray-500 text-sm text-center py-8">No slide content</div>
         )}
       </div>
-      <div className="px-4 py-3 flex justify-between border-t border-gray-700/50">
+      {captionText && (
+        <div className="px-4 py-2 bg-black/70 backdrop-blur flex-shrink-0">
+          <p className="text-white text-sm text-center leading-relaxed">{captionText}</p>
+        </div>
+      )}
+      <div className="px-4 py-3 flex justify-between border-t border-gray-700/50 flex-shrink-0">
         <button
           onClick={onPrev}
           disabled={currentSlide === 0}

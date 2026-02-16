@@ -718,7 +718,6 @@ Estimated Timeline: 8-10 weeks.
 **Goal:** Production-grade experience with enterprise features.
 
 Deliverables:
-- Animated agent avatars with lip-sync (D-ID or HeyGen integration)
 - Session recording playback with timeline scrubbing and moment-jumping
 - Multi-session dashboard with improvement tracking and trend charts
 - PDF report generation and export

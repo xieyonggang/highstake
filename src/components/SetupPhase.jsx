@@ -26,8 +26,8 @@ export default function SetupPhase() {
   const handleFileSelect = async (file) => {
     if (!file) return;
     const name = file.name.toLowerCase();
-    if (!name.endsWith('.pptx') && !name.endsWith('.pdf')) {
-      setUploadError('Only PPTX and PDF files are supported.');
+    if (!name.endsWith('.pdf')) {
+      setUploadError('Please upload a PDF file. Export your PPTX to PDF first for best slide rendering.');
       return;
     }
     if (file.size > 50 * 1024 * 1024) {
@@ -197,7 +197,7 @@ export default function SetupPhase() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pptx,.pdf"
+                  accept=".pdf"
                   className="hidden"
                   onChange={(e) => handleFileSelect(e.target.files[0])}
                 />
@@ -229,7 +229,7 @@ export default function SetupPhase() {
                 ) : (
                   <div>
                     <div className="text-4xl mb-3 opacity-50">📎</div>
-                    <div className="text-gray-400 font-medium">Drop your PPTX or PDF here</div>
+                    <div className="text-gray-400 font-medium">Drop your PDF here</div>
                     <div className="text-gray-600 text-sm mt-1">or click to browse</div>
                   </div>
                 )}

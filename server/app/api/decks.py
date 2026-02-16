@@ -19,8 +19,8 @@ async def upload_deck(
         raise HTTPException(status_code=400, detail="No filename provided")
 
     filename_lower = file.filename.lower()
-    if not (filename_lower.endswith(".pptx") or filename_lower.endswith(".pdf")):
-        raise HTTPException(status_code=400, detail="Only PPTX and PDF files are supported")
+    if not filename_lower.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported. Please export your PPTX to PDF first.")
 
     file_bytes = await file.read()
     file_size = len(file_bytes)

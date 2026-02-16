@@ -60,7 +60,6 @@ npm run build
 
 ### Phase 3
 - [ ] Real-time agent interruptions with natural timing
-- [ ] Animated avatars with lip-sync (D-ID / HeyGen)
 - [ ] Multi-session tracking and improvement over time
 - [ ] Team/org accounts
 - [ ] Export to PDF reports

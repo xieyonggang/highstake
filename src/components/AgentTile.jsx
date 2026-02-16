@@ -1,6 +1,58 @@
 import React from 'react';
 
-export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised }) {
+export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, compact }) {
+  if (compact) {
+    return (
+      <div
+        className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-300 ${
+          isActive ? 'ring-1 ring-offset-1 ring-offset-gray-950' : ''
+        }`}
+        style={{
+          background: `linear-gradient(135deg, ${agent.color}15, ${agent.color}05)`,
+          borderColor: isActive ? agent.color : 'transparent',
+          boxShadow: isSpeaking ? `0 0 20px ${agent.color}30` : 'none',
+        }}
+      >
+        <div
+          className={`relative w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0 transition-transform duration-300 ${
+            isSpeaking ? 'scale-110' : ''
+          }`}
+          style={{ background: `linear-gradient(135deg, ${agent.color}, ${agent.color}cc)` }}
+        >
+          {agent.avatar}
+          {isSpeaking && (
+            <div
+              className="absolute inset-0 rounded-full animate-ping opacity-30"
+              style={{ background: agent.color }}
+            />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-white font-semibold text-sm truncate">{agent.name}</div>
+          <div className="text-gray-400 text-xs truncate">{agent.role}</div>
+        </div>
+        {hasHandRaised && (
+          <span className="text-lg animate-bounce flex-shrink-0">✋</span>
+        )}
+        {isSpeaking && (
+          <div className="flex gap-0.5 flex-shrink-0">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-0.5 rounded-full animate-pulse"
+                style={{
+                  background: agent.color,
+                  height: `${6 + Math.random() * 10}px`,
+                  animationDelay: `${i * 0.15}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`relative rounded-2xl overflow-hidden aspect-video transition-all duration-500 ${
