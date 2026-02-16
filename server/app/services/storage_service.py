@@ -1,8 +1,8 @@
 import logging
+import os
 from typing import Optional
 
-import boto3
-from botocore.config import Config as BotoConfig
+import aiofiles
 
 from app.config import settings
 
@@ -10,49 +10,49 @@ logger = logging.getLogger(__name__)
 
 
 class StorageService:
+    """Local filesystem storage service.
+
+    Replaces the previous R2/S3 (boto3) implementation.  Files are stored
+    under ``settings.storage_dir`` and served by FastAPI via the
+    ``/api/files/{path}`` route defined in ``main.py``.
+    """
+
     def __init__(self):
-        if settings.storage_endpoint and settings.storage_access_key:
-            self.client = boto3.client(
-                "s3",
-                endpoint_url=settings.storage_endpoint,
-                aws_access_key_id=settings.storage_access_key,
-                aws_secret_access_key=settings.storage_secret_key,
-                config=BotoConfig(signature_version="s3v4"),
-            )
-            self.bucket = settings.storage_bucket
-            self.enabled = True
-        else:
-            self.client = None
-            self.bucket = None
-            self.enabled = False
-            logger.warning("Storage service not configured. File storage disabled.")
+        self.base_dir = settings.storage_dir
+        os.makedirs(self.base_dir, exist_ok=True)
 
-    async def upload(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
-        if not self.enabled:
-            logger.warning(f"Storage disabled. Would upload to key: {key}")
-            return key
+    def _full_path(self, key: str) -> str:
+        return os.path.join(self.base_dir, key)
 
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=key,
-            Body=data,
-            ContentType=content_type,
-        )
+    async def upload(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Write *data* to ``{storage_dir}/{key}``."""
+        full_path = self._full_path(key)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        async with aiofiles.open(full_path, "wb") as f:
+            await f.write(data)
+        logger.debug(f"Stored {len(data)} bytes at {full_path}")
         return key
 
-    async def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
-        if not self.enabled:
-            return f"/api/storage/mock/{key}"
+    async def get_url(self, key: str) -> str:
+        """Return the URL path served by FastAPI's static file route."""
+        return f"/api/files/{key}"
 
-        url = self.client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=expires_in,
-        )
-        return url
+    # Keep backward-compat alias
+    async def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
+        return await self.get_url(key)
 
     async def delete(self, key: str) -> None:
-        if not self.enabled:
-            return
+        """Remove a file from disk."""
+        full_path = self._full_path(key)
+        try:
+            os.remove(full_path)
+        except FileNotFoundError:
+            pass
 
-        self.client.delete_object(Bucket=self.bucket, Key=key)
+    async def exists(self, key: str) -> bool:
+        return os.path.isfile(self._full_path(key))

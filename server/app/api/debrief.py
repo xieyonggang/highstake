@@ -78,5 +78,5 @@ async def get_recording(
     from app.services.storage_service import StorageService
 
     storage = StorageService()
-    url = await storage.get_signed_url(session.recording_key)
+    url = await storage.get_url(session.recording_key)
     return {"url": url}

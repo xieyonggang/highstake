@@ -9,7 +9,7 @@ from app.services.agent_prompts import (
     AGENT_TITLES,
     build_agent_prompt,
 )
-from app.services.claude_client import ClaudeClient
+from app.services.llm_client import LLMClient
 from app.services.context_manager import ContextManager
 from app.services.tts_service import TTSService
 
@@ -53,14 +53,14 @@ class AgentEngine:
         session_id: str,
         config: dict,
         deck_manifest: dict,
-        claude_client: ClaudeClient,
+        llm_client: LLMClient,
         tts_service: TTSService,
         emit_callback,
     ):
         self.session_id = session_id
         self.config = config
         self.deck_manifest = deck_manifest
-        self.claude = claude_client
+        self.llm = llm_client
         self.tts = tts_service
         self.emit = emit_callback
         self.context = ContextManager()
@@ -141,7 +141,7 @@ class AgentEngine:
             await self._generate_and_emit_question(agent_id)
 
     async def _generate_and_emit_question(self, agent_id: str) -> None:
-        """Build context, call Claude, emit question event, optionally TTS."""
+        """Build context, call Gemini, emit question event, optionally TTS."""
         context = self.context.get_context_for_agent(
             agent_id,
             self.current_slide,
@@ -164,12 +164,12 @@ class AgentEngine:
         )
 
         try:
-            question_text = await self.claude.generate_question(
+            question_text = await self.llm.generate_question(
                 system_prompt=prompt,
                 context_messages=[{"role": "user", "content": "Ask your question now."}],
             )
         except Exception as e:
-            logger.warning(f"Claude API failed for {agent_id}: {e}. Using fallback.")
+            logger.warning(f"Gemini API failed for {agent_id}: {e}. Using fallback.")
             question_text = self._get_fallback_question(agent_id)
 
         self.previous_questions.append({"agent_id": agent_id, "text": question_text})
@@ -184,7 +184,7 @@ class AgentEngine:
         # Attempt TTS
         audio_url = None
         try:
-            audio_url = await self.tts.synthesize(agent_id, question_text)
+            audio_url = await self.tts.synthesize(agent_id, question_text, session_id=self.session_id)
         except Exception as e:
             logger.warning(f"TTS failed for {agent_id}: {e}. Text-only.")
 
@@ -236,7 +236,7 @@ class AgentEngine:
         """Emit a moderator message with optional TTS."""
         audio_url = None
         try:
-            audio_url = await self.tts.synthesize("moderator", text)
+            audio_url = await self.tts.synthesize("moderator", text, session_id=self.session_id)
         except Exception:
             pass
 

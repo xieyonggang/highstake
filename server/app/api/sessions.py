@@ -92,8 +92,13 @@ async def upload_recording(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # TODO: Upload to R2 storage service
+    from app.services.storage_service import StorageService
+
+    storage = StorageService()
     recording_key = f"recordings/{session_id}/{recording.filename}"
+    file_bytes = await recording.read()
+    await storage.upload(recording_key, file_bytes, recording.content_type or "video/webm")
+
     session.recording_key = recording_key
     await db.flush()
 

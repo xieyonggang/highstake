@@ -34,18 +34,17 @@ async def disconnect(sid):
     session_id = active_sessions.pop(sid, None)
     if session_id:
         logger.info(f"Client {sid} disconnected from session {session_id}")
-
-        # Stop STT stream if active
-        from app.ws.events import stop_stt_for_session
-        await stop_stt_for_session(session_id)
+        from app.ws.events import cleanup_session
+        await cleanup_session(session_id)
 
 
 @sio.event
-async def audio_chunk(sid, data):
-    from app.ws.events import handle_audio_chunk
+async def transcript_text(sid, data):
+    """Receive transcript text from browser Web Speech API."""
+    from app.ws.events import handle_transcript_text
     session_id = active_sessions.get(sid)
     if session_id:
-        await handle_audio_chunk(session_id, sid, data)
+        await handle_transcript_text(session_id, sid, data)
 
 
 @sio.event

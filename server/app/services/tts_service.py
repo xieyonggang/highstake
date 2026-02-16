@@ -1,70 +1,103 @@
 import hashlib
+import io
 import logging
+import os
+import struct
+import wave
 from typing import Optional
 
-import httpx
-
 from app.config import settings
-from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
-# Maps agent IDs to ElevenLabs voice IDs (configured via settings)
+# Maps agent IDs to Gemini TTS voice names
 AGENT_VOICE_MAP = {
-    "moderator": settings.voice_id_moderator,
-    "skeptic": settings.voice_id_skeptic,
-    "analyst": settings.voice_id_analyst,
-    "contrarian": settings.voice_id_contrarian,
+    "moderator": settings.tts_voice_moderator,
+    "skeptic": settings.tts_voice_skeptic,
+    "analyst": settings.tts_voice_analyst,
+    "contrarian": settings.tts_voice_contrarian,
 }
 
 
 class TTSService:
-    """ElevenLabs text-to-speech service."""
+    """Gemini text-to-speech service with local file storage."""
 
-    def __init__(self, api_key: str, storage: StorageService):
-        self.api_key = api_key
-        self.storage = storage
-        self.base_url = "https://api.elevenlabs.io/v1"
+    def __init__(self):
+        self.api_key = settings.gemini_api_key
+        self.storage_dir = settings.storage_dir
 
-    async def synthesize(self, agent_id: str, text: str) -> Optional[str]:
-        """Convert text to speech using the agent's voice profile.
-        Upload audio to storage and return a signed URL."""
+    async def synthesize(
+        self,
+        agent_id: str,
+        text: str,
+        session_id: str = "default",
+    ) -> Optional[str]:
+        """Convert text to speech using Gemini TTS with the agent's voice.
+        Save audio locally and return a URL path."""
         if not self.api_key:
-            logger.warning("ElevenLabs API key not configured. TTS disabled.")
+            logger.warning("Gemini API key not configured. TTS disabled.")
             return None
 
-        voice_id = AGENT_VOICE_MAP.get(agent_id)
-        if not voice_id:
-            logger.warning(f"No voice ID configured for agent: {agent_id}")
+        voice_name = AGENT_VOICE_MAP.get(agent_id)
+        if not voice_name:
+            logger.warning(f"No voice configured for agent: {agent_id}")
             return None
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/text-to-speech/{voice_id}/stream",
-                    headers={
-                        "xi-api-key": self.api_key,
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "text": text,
-                        "model_id": "eleven_multilingual_v2",
-                        "voice_settings": {
-                            "stability": 0.5,
-                            "similarity_boost": 0.75,
-                        },
-                    },
-                    timeout=15.0,
-                )
-                response.raise_for_status()
-                audio_bytes = response.content
+            from google import genai
+            from google.genai import types
 
-            # Upload to storage
+            client = genai.Client(api_key=self.api_key)
+
+            response = client.models.generate_content(
+                model="gemini-2.5-flash-preview-tts",
+                contents=text,
+                config=types.GenerateContentConfig(
+                    response_modalities=["AUDIO"],
+                    speech_config=types.SpeechConfig(
+                        voice_config=types.VoiceConfig(
+                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                voice_name=voice_name,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+
+            # Extract audio data from the response
+            audio_data = response.candidates[0].content.parts[0].inline_data.data
+
+            # Convert raw PCM to WAV
+            wav_bytes = self._pcm_to_wav(audio_data)
+
+            # Save to local filesystem
             text_hash = hashlib.md5(text.encode()).hexdigest()[:12]
-            key = f"tts/{agent_id}/{text_hash}.mp3"
-            await self.storage.upload(key, audio_bytes, "audio/mpeg")
-            return await self.storage.get_signed_url(key)
+            rel_path = f"tts/{session_id}/{agent_id}_{text_hash}.wav"
+            full_path = os.path.join(self.storage_dir, rel_path)
+
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+            with open(full_path, "wb") as f:
+                f.write(wav_bytes)
+
+            # Return URL path served by FastAPI
+            return f"/api/files/{rel_path}"
 
         except Exception as e:
             logger.error(f"TTS synthesis failed for {agent_id}: {e}")
             raise
+
+    def _pcm_to_wav(
+        self,
+        pcm_data: bytes,
+        sample_rate: int = 24000,
+        channels: int = 1,
+        sample_width: int = 2,
+    ) -> bytes:
+        """Convert raw PCM bytes to WAV format."""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_data)
+        return buf.getvalue()
