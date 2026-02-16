@@ -13,6 +13,7 @@ __pycache__/
 venv/
 server/.env
 server/*.egg-info/
+server/build/
 *.db
 
 # Local storage (TTS audio, recordings, deck thumbnails)
