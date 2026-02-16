@@ -141,9 +141,7 @@ export default function MeetingPhase() {
       // Could update UI state (presenting, q_and_a, ending)
     });
 
-    socket.on('stt_error', (data) => {
-      console.warn('STT error:', data.error);
-    });
+    // Note: STT runs in browser via Web Speech API — no server-side STT errors
 
     socket.on('session_ended', async (data) => {
       await handleSessionEnded(data);

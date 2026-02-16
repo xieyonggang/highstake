@@ -62,13 +62,13 @@ async def finalize_session(session_id: str) -> None:
         strengths = []
         coaching_items = []
 
-        if settings.anthropic_api_key:
+        if settings.gemini_api_key:
             try:
-                from app.services.claude_client import ClaudeClient
+                from app.services.llm_client import LLMClient
                 from app.services.coaching_generator import CoachingGenerator
 
-                claude = ClaudeClient(settings.anthropic_api_key)
-                generator = CoachingGenerator(claude)
+                llm = LLMClient(settings.gemini_api_key)
+                generator = CoachingGenerator(llm)
 
                 deck_manifest = session.deck.manifest if session.deck else {}
                 coaching_data = await generator.generate(

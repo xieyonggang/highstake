@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Optional
 
-from app.services.claude_client import ClaudeClient
+from app.services.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +35,8 @@ Respond ONLY with valid JSON matching this exact schema:
 
 
 class CoachingGenerator:
-    def __init__(self, claude_client: ClaudeClient):
-        self.claude = claude_client
+    def __init__(self, llm_client: LLMClient):
+        self.llm = llm_client
 
     async def generate(
         self,
@@ -50,7 +50,7 @@ class CoachingGenerator:
             transcript, scores, config, deck_manifest
         )
 
-        response_text = await self.claude.generate_debrief(
+        response_text = await self.llm.generate_debrief(
             system_prompt=COACHING_SYSTEM_PROMPT,
             session_data=session_context,
             max_tokens=2000,

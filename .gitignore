@@ -14,3 +14,7 @@ venv/
 server/.env
 server/*.egg-info/
 *.db
+
+# Local storage (TTS audio, recordings, deck thumbnails)
+data/
+server/data/

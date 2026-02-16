@@ -88,10 +88,8 @@ async def get_slide_thumbnail(
     if not slide.thumbnail_key:
         raise HTTPException(status_code=404, detail="No thumbnail available")
 
-    # TODO: Generate signed URL from storage service and redirect
-    # For now, return the key
     from app.services.storage_service import StorageService
 
     storage = StorageService()
-    url = await storage.get_signed_url(slide.thumbnail_key)
+    url = await storage.get_url(slide.thumbnail_key)
     return RedirectResponse(url=url)

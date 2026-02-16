@@ -1,9 +1,11 @@
 import logging
+import os
 
 import socketio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.api import sessions, decks, debrief
@@ -19,6 +21,9 @@ async def lifespan(app: FastAPI):
     from app.models.base import init_db
     await init_db()
     logger.info("Database tables created / verified")
+
+    # Ensure storage directory exists
+    os.makedirs(settings.storage_dir, exist_ok=True)
     yield
 
 
@@ -46,6 +51,39 @@ app.include_router(debrief.router, prefix="/api", tags=["debrief"])
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "0.2.0"}
+
+
+# ---------------------------------------------------------------------------
+# Static file serving — local storage (replaces R2/S3 signed URLs)
+# ---------------------------------------------------------------------------
+MIME_MAP = {
+    ".wav": "audio/wav",
+    ".webm": "video/webm",
+    ".mp4": "video/mp4",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".json": "application/json",
+    ".pdf": "application/pdf",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+
+@app.get("/api/files/{file_path:path}")
+async def serve_file(file_path: str):
+    """Serve files from the local storage directory."""
+    full_path = os.path.join(settings.storage_dir, file_path)
+    # Prevent directory traversal
+    full_path = os.path.realpath(full_path)
+    storage_real = os.path.realpath(settings.storage_dir)
+    if not full_path.startswith(storage_real):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = os.path.splitext(full_path)[1].lower()
+    media_type = MIME_MAP.get(ext, "application/octet-stream")
+    return FileResponse(full_path, media_type=media_type)
 
 
 # Mount Socket.IO as ASGI sub-app
