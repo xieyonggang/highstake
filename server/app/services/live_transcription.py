@@ -35,7 +35,14 @@ class LiveTranscriptionService:
     async def start(self):
         """Open a Live API session and start the receive loop."""
         config = types.LiveConnectConfig(
-            response_modalities=["TEXT"],
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name="Aoede"
+                    )
+                )
+            ),
             input_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
@@ -52,7 +59,7 @@ class LiveTranscriptionService:
             ),
         )
         self._session_ctx = self.client.aio.live.connect(
-            model="gemini-live-2.5-flash-preview",
+            model="gemini-2.5-flash-native-audio-preview-12-2025",
             config=config,
         )
         self._session = await self._session_ctx.__aenter__()
@@ -70,6 +77,7 @@ class LiveTranscriptionService:
                     data=pcm_bytes, mime_type="audio/pcm;rate=16000"
                 )
             )
+            # logger.debug(f"Sent {len(pcm_bytes)} bytes of audio to session {self.session_id}")
         except Exception as e:
             logger.warning(
                 f"Session {self.session_id}: error sending audio: {e}"
@@ -78,6 +86,7 @@ class LiveTranscriptionService:
     async def _receive_loop(self):
         """Listen for messages from the Live API session."""
         transcript_buffer = ""
+        logger.info(f"Session {self.session_id}: Starting receive loop")
         try:
             async for message in self._session.receive():
                 if not self._running:
@@ -90,10 +99,17 @@ class LiveTranscriptionService:
 
                 # Extract input transcription (what the user said)
                 input_transcription = getattr(
+                    server_content, "model_turn", None
+                )
+                
+                # Check for real input transcription
+                real_input_transcription = getattr(
                     server_content, "input_transcription", None
                 )
-                if input_transcription:
-                    text = getattr(input_transcription, "text", "") or ""
+                
+                if real_input_transcription:
+                    text = getattr(real_input_transcription, "text", "") or ""
+                    logger.info(f"Session {self.session_id}: Received input transcription text: '{text}'")
                     if text.strip():
                         transcript_buffer += text
                         # Emit interim transcript segment
@@ -103,12 +119,16 @@ class LiveTranscriptionService:
                             "is_final": False,
                             "confidence": 0.9,
                         }
+                        logger.info(f"Session {self.session_id}: Emitting interim segment: {segment}")
                         await self.emit_callback(
                             "transcript_segment", segment
                         )
 
                 # Check for turn completion (user stopped speaking)
                 turn_complete = getattr(server_content, "turn_complete", False)
+                if turn_complete:
+                    logger.info(f"Session {self.session_id}: Turn complete. Buffer: '{transcript_buffer}'")
+
                 if turn_complete and transcript_buffer.strip():
                     final_segment = {
                         "type": "final",
@@ -116,6 +136,7 @@ class LiveTranscriptionService:
                         "is_final": True,
                         "confidence": 0.9,
                     }
+                    logger.info(f"Session {self.session_id}: Emitting final segment: {final_segment}")
                     await self.emit_callback(
                         "transcript_segment", final_segment
                     )

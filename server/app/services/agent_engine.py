@@ -1,6 +1,8 @@
 import logging
 import random
 import time
+import glob
+import os
 from typing import Optional
 
 from app.services.agent_prompts import (
@@ -260,13 +262,32 @@ class AgentEngine:
         selected = random.sample(agents, count)
         return selected
 
-    async def _emit_moderator(self, text: str) -> None:
-        """Emit a moderator message with optional TTS."""
+    async def _emit_moderator(self, text: str, is_static: bool = False) -> None:
+        """Emit a moderator message using static audio file."""
         audio_url = None
-        try:
-            audio_url = await self.tts.synthesize("moderator", text, session_id=self.session_id)
-        except Exception:
-            pass
+        
+        # Check for static audio file matching moderator*.wav in app/resources/common_assets
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        resources_dir = os.path.join(base_dir, "resources")
+        common_assets_dir = os.path.join(resources_dir, "common_assets")
+        
+        moderator_pattern = os.path.join(common_assets_dir, "moderator*.wav")
+        moderator_files = glob.glob(moderator_pattern)
+        
+        if moderator_files:
+            # Use the first matching file, sorted to be deterministic
+            moderator_files.sort()
+            selected_file = moderator_files[0]
+            
+            # Make path relative to resources_dir for serving via /api/resources/
+            rel_path = os.path.relpath(selected_file, resources_dir)
+            
+            # Ensure forward slashes for URL
+            rel_path = rel_path.replace(os.sep, '/')
+            audio_url = f"/api/resources/{rel_path}"
+            logger.info(f"Using static moderator audio: {audio_url}")
+        else:
+            logger.warning(f"No static moderator audio found in {common_assets_dir}")
 
         await self._store_transcript_entry("moderator", text, entry_type="moderator")
 

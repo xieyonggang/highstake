@@ -1,6 +1,7 @@
 import base64
 import logging
 import time
+import asyncio
 
 from app.ws.handler import sio
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 session_engines: dict[str, object] = {}  # session_id -> AgentEngine
 session_start_times: dict[str, float] = {}  # session_id -> start timestamp
 session_live_services: dict[str, object] = {}  # session_id -> LiveTranscriptionService
+session_locks: dict[str, asyncio.Lock] = {} # session_id -> Lock
 
 
 async def handle_audio_chunk(session_id: str, sid: str, data: dict):
@@ -21,24 +23,44 @@ async def handle_audio_chunk(session_id: str, sid: str, data: dict):
     audio_b64 = data.get("audio", "")
     if not audio_b64:
         return
-
-    try:
-        pcm_bytes = base64.b64decode(audio_b64)
-    except Exception:
-        logger.warning(f"Session {session_id}: invalid base64 audio data")
-        return
-
-    # Ensure engine is initialized
-    if session_id not in session_engines:
-        await initialize_agent_engine(session_id)
-
-    # Ensure live transcription service is running (may need separate retry)
-    live_service = session_live_services.get(session_id)
-    if not live_service:
-        await _ensure_live_service(session_id)
+    
+        # logger.debug(f"Session {session_id}: Received audio chunk, size {len(audio_b64)}")
+    
+    
+    
+        try:
+    
+            pcm_bytes = base64.b64decode(audio_b64)
+    
+        except Exception:
+    
+            logger.warning(f"Session {session_id}: invalid base64 audio data")
+    
+            return
+    
+    
+    
+        # Ensure engine is initialized
+    
+        if session_id not in session_engines:
+    
+            await initialize_agent_engine(session_id)
+    
+    
+    
+        # Ensure live transcription service is running (may need separate retry)
+    
         live_service = session_live_services.get(session_id)
-
-    if live_service:
+    
+        if not live_service:
+    
+            await _ensure_live_service(session_id)
+    
+            live_service = session_live_services.get(session_id)
+    
+    
+    
+        if live_service:
         await live_service.send_audio(pcm_bytes)
     else:
         logger.warning(
@@ -102,7 +124,7 @@ async def handle_start_session(session_id: str, sid: str):
             "Presenter, the floor is yours. We'll hold questions per the agreed format. "
             "Please begin when ready."
         )
-        await engine._emit_moderator(greeting)
+        await engine._emit_moderator(greeting, is_static=True)
     else:
         # No engine (no API key) — emit text-only greeting
         await sio.emit(
@@ -163,100 +185,112 @@ async def cleanup_session(session_id: str):
 
     session_engines.pop(session_id, None)
     session_start_times.pop(session_id, None)
+    session_locks.pop(session_id, None)
 
 
 async def initialize_agent_engine(session_id: str):
     """Initialize the agent engine and live transcription for a session."""
-    from app.config import settings
-    from app.models.base import async_session_factory
-    from app.models.session import Session
-    from app.models.deck import Deck
-    from sqlalchemy import select
+    if session_id not in session_locks:
+        session_locks[session_id] = asyncio.Lock()
+    
+    async with session_locks[session_id]:
+        if session_id in session_engines:
+            return
 
-    if not settings.gemini_api_key:
-        logger.warning(f"No Gemini API key. Agent engine disabled for session {session_id}")
-        return
+        from app.config import settings
+        from app.models.base import async_session_factory
+        from app.models.session import Session
+        from app.models.deck import Deck
+        from sqlalchemy import select
 
-    try:
-        async with async_session_factory() as db:
-            result = await db.execute(
-                select(Session).where(Session.id == session_id)
-            )
-            session = result.scalar_one_or_none()
-            if not session:
-                return
+        if not settings.gemini_api_key:
+            logger.warning(f"No Gemini API key. Agent engine disabled for session {session_id}")
+            return
 
-            deck_manifest = None
-            if session.deck_id:
-                deck_result = await db.execute(
-                    select(Deck).where(Deck.id == session.deck_id)
+        try:
+            async with async_session_factory() as db:
+                result = await db.execute(
+                    select(Session).where(Session.id == session_id)
                 )
-                deck = deck_result.scalar_one_or_none()
-                if deck:
-                    deck_manifest = deck.manifest
+                session = result.scalar_one_or_none()
+                if not session:
+                    return
 
-        from app.services.llm_client import LLMClient
-        from app.services.tts_service import TTSService
-        from app.services.agent_engine import AgentEngine
-        from app.services.live_transcription import LiveTranscriptionService
+                deck_manifest = None
+                if session.deck_id:
+                    deck_result = await db.execute(
+                        select(Deck).where(Deck.id == session.deck_id)
+                    )
+                    deck = deck_result.scalar_one_or_none()
+                    if deck:
+                        deck_manifest = deck.manifest
 
-        llm = LLMClient(settings.gemini_api_key)
-        tts = TTSService()
+            from app.services.llm_client import LLMClient
+            from app.services.tts_service import TTSService
+            from app.services.agent_engine import AgentEngine
+            from app.services.live_transcription import LiveTranscriptionService
 
-        async def emit_callback(event: str, data: dict):
-            await sio.emit(event, data, room=f"session_{session_id}")
+            llm = LLMClient(settings.gemini_api_key)
+            tts = TTSService()
 
-        engine = AgentEngine(
-            session_id=session_id,
-            config={
-                "interaction_mode": session.interaction_mode,
-                "intensity": session.intensity,
-                "agents": session.agents,
-                "focus_areas": session.focus_areas,
-            },
-            deck_manifest=deck_manifest or {},
-            llm_client=llm,
-            tts_service=tts,
-            emit_callback=emit_callback,
-        )
-        session_engines[session_id] = engine
-        session_start_times.setdefault(session_id, time.time())
-        logger.info(f"Agent engine initialized for session {session_id}")
+            async def emit_callback(event: str, data: dict):
+                await sio.emit(event, data, room=f"session_{session_id}")
 
-        # Start live transcription service (separate so engine works even if this fails)
-        await _ensure_live_service(session_id)
-    except Exception as e:
-        logger.error(f"Failed to initialize agent engine for session {session_id}: {e}")
+            engine = AgentEngine(
+                session_id=session_id,
+                config={
+                    "interaction_mode": session.interaction_mode,
+                    "intensity": session.intensity,
+                    "agents": session.agents,
+                    "focus_areas": session.focus_areas,
+                },
+                deck_manifest=deck_manifest or {},
+                llm_client=llm,
+                tts_service=tts,
+                emit_callback=emit_callback,
+            )
+            session_engines[session_id] = engine
+            session_start_times.setdefault(session_id, time.time())
+            logger.info(f"Agent engine initialized for session {session_id}")
+
+            # Start live transcription service (separate so engine works even if this fails)
+            await _ensure_live_service(session_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize agent engine for session {session_id}: {e}")
 
 
 async def _ensure_live_service(session_id: str):
     """Create and start a live transcription service if one doesn't exist yet."""
-    if session_id in session_live_services:
-        return
+    if session_id not in session_locks:
+        session_locks[session_id] = asyncio.Lock()
 
-    from app.config import settings
-    from app.services.live_transcription import LiveTranscriptionService
+    async with session_locks[session_id]:
+        if session_id in session_live_services:
+            return
 
-    if not settings.gemini_api_key:
-        return
+        from app.config import settings
+        from app.services.live_transcription import LiveTranscriptionService
 
-    async def emit_callback(event: str, data: dict):
-        await sio.emit(event, data, room=f"session_{session_id}")
+        if not settings.gemini_api_key:
+            return
 
-    async def on_final_transcript(segment: dict):
-        eng = session_engines.get(session_id)
-        if eng:
-            await eng.on_transcript_segment(segment)
+        async def emit_callback(event: str, data: dict):
+            await sio.emit(event, data, room=f"session_{session_id}")
 
-    try:
-        live_service = LiveTranscriptionService(
-            session_id=session_id,
-            api_key=settings.gemini_api_key,
-            emit_callback=emit_callback,
-            on_final_transcript=on_final_transcript,
-        )
-        await live_service.start()
-        session_live_services[session_id] = live_service
-        logger.info(f"Live transcription started for session {session_id}")
-    except Exception as e:
-        logger.error(f"Failed to start live transcription for session {session_id}: {e}")
+        async def on_final_transcript(segment: dict):
+            eng = session_engines.get(session_id)
+            if eng:
+                await eng.on_transcript_segment(segment)
+
+        try:
+            live_service = LiveTranscriptionService(
+                session_id=session_id,
+                api_key=settings.gemini_api_key,
+                emit_callback=emit_callback,
+                on_final_transcript=on_final_transcript,
+            )
+            await live_service.start()
+            session_live_services[session_id] = live_service
+            logger.info(f"Live transcription started for session {session_id}")
+        except Exception as e:
+            logger.error(f"Failed to start live transcription for session {session_id}: {e}")

@@ -49,6 +49,16 @@ class TTSService:
             logger.warning(f"No voice configured for agent: {agent_id}")
             return None
 
+        # Generate consistent filename
+        text_hash = hashlib.md5(text.encode()).hexdigest()[:12]
+        rel_path = f"tts/{session_id}/{agent_id}_{text_hash}.wav"
+        full_path = os.path.join(self.storage_dir, rel_path)
+
+        # Check if file exists (cache hit)
+        if os.path.exists(full_path):
+            logger.info(f"TTS cache hit for {agent_id}: {rel_path}")
+            return f"/api/files/{rel_path}"
+
         try:
             from google import genai
             from google.genai import types
@@ -77,10 +87,6 @@ class TTSService:
             wav_bytes = self._pcm_to_wav(audio_data)
 
             # Save to local filesystem
-            text_hash = hashlib.md5(text.encode()).hexdigest()[:12]
-            rel_path = f"tts/{session_id}/{agent_id}_{text_hash}.wav"
-            full_path = os.path.join(self.storage_dir, rel_path)
-
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "wb") as f:
                 f.write(wav_bytes)

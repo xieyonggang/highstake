@@ -86,5 +86,25 @@ async def serve_file(file_path: str):
     return FileResponse(full_path, media_type=media_type)
 
 
+@app.get("/api/resources/{file_path:path}")
+async def serve_resource(file_path: str):
+    """Serve static application resources."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    resources_dir = os.path.join(base_dir, "resources")
+    full_path = os.path.join(resources_dir, file_path)
+    
+    # Prevent directory traversal
+    full_path = os.path.realpath(full_path)
+    resources_real = os.path.realpath(resources_dir)
+    if not full_path.startswith(resources_real):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    ext = os.path.splitext(full_path)[1].lower()
+    media_type = MIME_MAP.get(ext, "application/octet-stream")
+    return FileResponse(full_path, media_type=media_type)
+
+
 # Mount Socket.IO as ASGI sub-app
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
