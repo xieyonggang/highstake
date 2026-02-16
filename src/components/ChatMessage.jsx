@@ -1,6 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-export default function ChatMessage({ agent, message, timestamp }) {
+export default function ChatMessage({ agent, message, timestamp, audioUrl }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const handlePlayAudio = () => {
+    if (!audioUrl) return;
+    const audio = new Audio(audioUrl);
+    setIsPlaying(true);
+    audio.onended = () => setIsPlaying(false);
+    audio.onerror = () => setIsPlaying(false);
+    audio.play().catch(() => setIsPlaying(false));
+  };
+
   return (
     <div className="flex gap-3 py-3 px-4 hover:bg-white/5 rounded-xl transition-colors">
       <div
@@ -15,6 +26,15 @@ export default function ChatMessage({ agent, message, timestamp }) {
             {agent.name}
           </span>
           <span className="text-gray-600 text-xs">{timestamp}</span>
+          {audioUrl && (
+            <button
+              onClick={handlePlayAudio}
+              className="text-gray-500 hover:text-gray-300 text-xs transition-colors"
+              title="Replay audio"
+            >
+              {isPlaying ? '⏸' : '🔊'}
+            </button>
+          )}
         </div>
         <p className="text-gray-300 text-sm mt-0.5 leading-relaxed">{message}</p>
       </div>

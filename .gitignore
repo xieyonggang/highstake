@@ -4,3 +4,13 @@ dist
 .env.local
 *.log
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+server/.env
+server/*.egg-info/
+*.db
