@@ -1,3 +1,4 @@
+import base64
 import logging
 import time
 
@@ -8,44 +9,41 @@ logger = logging.getLogger(__name__)
 # In-memory state for active sessions
 session_engines: dict[str, object] = {}  # session_id -> AgentEngine
 session_start_times: dict[str, float] = {}  # session_id -> start timestamp
+session_live_services: dict[str, object] = {}  # session_id -> LiveTranscriptionService
 
 
-async def handle_transcript_text(session_id: str, sid: str, data: dict):
-    """Handle transcript text received from browser Web Speech API."""
-    text = data.get("text", "")
-    is_final = data.get("isFinal", False)
+async def handle_audio_chunk(session_id: str, sid: str, data: dict):
+    """Handle PCM audio chunk from browser AudioWorklet.
 
-    if not text:
+    Decodes the base64 PCM data and forwards it to the Gemini Live API
+    session for real-time transcription.
+    """
+    audio_b64 = data.get("audio", "")
+    if not audio_b64:
         return
 
-    if session_id not in session_start_times:
-        session_start_times[session_id] = time.time()
+    try:
+        pcm_bytes = base64.b64decode(audio_b64)
+    except Exception:
+        logger.warning(f"Session {session_id}: invalid base64 audio data")
+        return
 
-    elapsed = time.time() - session_start_times.get(session_id, time.time())
+    # Ensure engine is initialized
+    if session_id not in session_engines:
+        await initialize_agent_engine(session_id)
 
-    segment = {
-        "type": "final" if is_final else "interim",
-        "text": text,
-        "start_time": elapsed,
-        "end_time": elapsed,
-        "confidence": data.get("confidence", 0.9),
-        "is_final": is_final,
-    }
+    # Ensure live transcription service is running (may need separate retry)
+    live_service = session_live_services.get(session_id)
+    if not live_service:
+        await _ensure_live_service(session_id)
+        live_service = session_live_services.get(session_id)
 
-    # Emit transcript segment back to client
-    await sio.emit("transcript_segment", segment, room=f"session_{session_id}")
-
-    # Forward final segments to agent engine
-    if is_final:
-        engine = session_engines.get(session_id)
-        if engine:
-            await engine.on_transcript_segment(segment)
-        else:
-            # Initialize agent engine if not yet started
-            await initialize_agent_engine(session_id)
-            engine = session_engines.get(session_id)
-            if engine:
-                await engine.on_transcript_segment(segment)
+    if live_service:
+        await live_service.send_audio(pcm_bytes)
+    else:
+        logger.warning(
+            f"Session {session_id}: no live transcription service available"
+        )
 
 
 async def handle_slide_change(session_id: str, sid: str, data: dict):
@@ -90,6 +88,36 @@ async def handle_presenter_response(session_id: str, sid: str, data: dict):
         await engine.on_transcript_segment(segment)
 
 
+async def handle_start_session(session_id: str, sid: str):
+    """Initialize agent engine and send moderator greeting with TTS."""
+    logger.info(f"Session {session_id}: starting")
+
+    if session_id not in session_engines:
+        await initialize_agent_engine(session_id)
+
+    engine = session_engines.get(session_id)
+    if engine:
+        greeting = (
+            "Good morning everyone. We're here today for a strategic presentation. "
+            "Presenter, the floor is yours. We'll hold questions per the agreed format. "
+            "Please begin when ready."
+        )
+        await engine._emit_moderator(greeting)
+    else:
+        # No engine (no API key) — emit text-only greeting
+        await sio.emit(
+            "moderator_message",
+            {
+                "text": "Good morning everyone. We're here today for a strategic presentation. "
+                        "Presenter, the floor is yours. Please begin when ready.",
+                "audioUrl": None,
+                "agentName": "Diana Chen",
+                "agentRole": "Moderator",
+            },
+            room=f"session_{session_id}",
+        )
+
+
 async def handle_end_session(session_id: str, sid: str):
     """Handle end session event. Generate scoring and debrief."""
     logger.info(f"Session {session_id}: ending")
@@ -122,13 +150,23 @@ async def handle_end_session(session_id: str, sid: str):
 
 
 async def cleanup_session(session_id: str):
-    """Clean up session state."""
+    """Clean up session state including live transcription service."""
+    # Stop live transcription service
+    live_service = session_live_services.pop(session_id, None)
+    if live_service:
+        try:
+            await live_service.stop()
+        except Exception as e:
+            logger.warning(
+                f"Session {session_id}: error stopping live transcription: {e}"
+            )
+
     session_engines.pop(session_id, None)
     session_start_times.pop(session_id, None)
 
 
 async def initialize_agent_engine(session_id: str):
-    """Initialize the agent engine for a session."""
+    """Initialize the agent engine and live transcription for a session."""
     from app.config import settings
     from app.models.base import async_session_factory
     from app.models.session import Session
@@ -160,6 +198,7 @@ async def initialize_agent_engine(session_id: str):
         from app.services.llm_client import LLMClient
         from app.services.tts_service import TTSService
         from app.services.agent_engine import AgentEngine
+        from app.services.live_transcription import LiveTranscriptionService
 
         llm = LLMClient(settings.gemini_api_key)
         tts = TTSService()
@@ -172,6 +211,7 @@ async def initialize_agent_engine(session_id: str):
             config={
                 "interaction_mode": session.interaction_mode,
                 "intensity": session.intensity,
+                "agents": session.agents,
                 "focus_areas": session.focus_areas,
             },
             deck_manifest=deck_manifest or {},
@@ -182,5 +222,41 @@ async def initialize_agent_engine(session_id: str):
         session_engines[session_id] = engine
         session_start_times.setdefault(session_id, time.time())
         logger.info(f"Agent engine initialized for session {session_id}")
+
+        # Start live transcription service (separate so engine works even if this fails)
+        await _ensure_live_service(session_id)
     except Exception as e:
         logger.error(f"Failed to initialize agent engine for session {session_id}: {e}")
+
+
+async def _ensure_live_service(session_id: str):
+    """Create and start a live transcription service if one doesn't exist yet."""
+    if session_id in session_live_services:
+        return
+
+    from app.config import settings
+    from app.services.live_transcription import LiveTranscriptionService
+
+    if not settings.gemini_api_key:
+        return
+
+    async def emit_callback(event: str, data: dict):
+        await sio.emit(event, data, room=f"session_{session_id}")
+
+    async def on_final_transcript(segment: dict):
+        eng = session_engines.get(session_id)
+        if eng:
+            await eng.on_transcript_segment(segment)
+
+    try:
+        live_service = LiveTranscriptionService(
+            session_id=session_id,
+            api_key=settings.gemini_api_key,
+            emit_callback=emit_callback,
+            on_final_transcript=on_final_transcript,
+        )
+        await live_service.start()
+        session_live_services[session_id] = live_service
+        logger.info(f"Live transcription started for session {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to start live transcription for session {session_id}: {e}")

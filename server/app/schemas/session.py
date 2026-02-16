@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class SessionCreate(BaseModel):
     interaction_mode: str
     intensity: str
+    agents: list[str] = ["skeptic", "analyst", "contrarian"]
     focus_areas: list[str] = []
     deck_id: Optional[str] = None
 
@@ -23,6 +24,7 @@ class SessionResponse(BaseModel):
     status: str
     interaction_mode: str
     intensity: str
+    agents: list[str]
     focus_areas: list[str]
     deck_id: Optional[str]
     started_at: Optional[datetime]

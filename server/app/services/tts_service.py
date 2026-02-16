@@ -16,6 +16,12 @@ AGENT_VOICE_MAP = {
     "skeptic": settings.tts_voice_skeptic,
     "analyst": settings.tts_voice_analyst,
     "contrarian": settings.tts_voice_contrarian,
+    "technologist": "Aoede",
+    "coo": "Puck",
+    "ceo": "Fenrir",
+    "cio": "Enceladus",
+    "chro": "Zephyr",
+    "cco": "Lyra",
 }
 
 

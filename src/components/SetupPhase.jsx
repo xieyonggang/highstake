@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { AGENTS, INTERACTION_MODES, INTENSITY_LEVELS, FOCUS_AREAS } from '../utils/constants';
+import { AGENTS, INTERACTION_MODES, INTENSITY_LEVELS } from '../utils/constants';
 import { useSessionStore } from '../stores/sessionStore';
 import { uploadDeck, createSession } from '../services/api';
 
@@ -19,7 +19,7 @@ export default function SetupPhase() {
   const moderatorMessages = [
     "Welcome to the Boardroom. I'm Diana Chen, and I'll be moderating your session today. Let's get you set up. First — how would you like the panel to engage with you?",
     'Got it. Now, how intense should we make this session?',
-    "Perfect. Are there specific areas you'd like the panel to focus on?",
+    "Now, who should be in the room? Your core panel is locked in, but you can bring in additional experts.",
     "Almost ready. Upload your presentation deck and we'll begin.",
   ];
 
@@ -62,7 +62,7 @@ export default function SetupPhase() {
       const session = await createSession({
         interaction: config.interaction,
         intensity: config.intensity,
-        focuses: config.focuses,
+        agents: config.agents,
         deckId: deckId,
       });
       setSessionId(session.id);
@@ -148,26 +148,65 @@ export default function SetupPhase() {
             ))}
 
           {step === 2 && (
-            <div className="grid grid-cols-2 gap-2">
-              {FOCUS_AREAS.map((area) => (
-                <button
-                  key={area}
-                  onClick={() => {
-                    const focuses = config.focuses.includes(area)
-                      ? config.focuses.filter((f) => f !== area)
-                      : [...config.focuses, area];
-                    setConfig({ ...config, focuses });
-                  }}
-                  className={`px-4 py-3 rounded-xl border text-sm font-medium transition-all ${
-                    config.focuses.includes(area)
-                      ? 'bg-indigo-500/15 border-indigo-500/50 text-indigo-300'
-                      : 'bg-gray-900/50 border-gray-800 text-gray-400 hover:border-gray-700'
-                  }`}
-                >
-                  {config.focuses.includes(area) ? '✓ ' : ''}
-                  {area}
-                </button>
-              ))}
+            <div className="space-y-2">
+              {AGENTS.filter((a) => a.id !== 'moderator').map((agent) => {
+                const isCore = !agent.optional;
+                const isSelected = config.agents.includes(agent.id);
+                return (
+                  <button
+                    key={agent.id}
+                    onClick={() => {
+                      if (isCore) return;
+                      const agents = isSelected
+                        ? config.agents.filter((id) => id !== agent.id)
+                        : [...config.agents, agent.id];
+                      setConfig({ ...config, agents });
+                    }}
+                    className={`w-full text-left px-5 py-4 rounded-xl border transition-all duration-300 ${
+                      isSelected
+                        ? 'bg-indigo-500/10 border-indigo-500/50 shadow-lg shadow-indigo-500/10'
+                        : 'bg-gray-900/50 border-gray-800 hover:border-gray-700'
+                    } ${isCore ? 'cursor-default' : ''}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+                        style={{ background: agent.color }}
+                      >
+                        {agent.avatar}
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-semibold text-sm">{agent.name}</span>
+                          <span
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                            style={{ background: `${agent.color}25`, color: agent.color }}
+                          >
+                            {agent.role}
+                          </span>
+                          {isCore && (
+                            <span className="px-1.5 py-0.5 rounded bg-gray-700 text-gray-400 text-[10px] font-medium">
+                              CORE
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-gray-500 text-xs mt-0.5">
+                          {agent.title} · {agent.personality}
+                        </div>
+                      </div>
+                      <div className="flex-shrink-0">
+                        {isCore ? (
+                          <span className="text-emerald-500 text-sm">✓</span>
+                        ) : (
+                          <span className={`text-sm ${isSelected ? 'text-indigo-400' : 'text-gray-600'}`}>
+                            {isSelected ? '✓' : '+'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
 

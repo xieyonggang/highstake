@@ -15,7 +15,7 @@ from app.services.tts_service import TTSService
 
 logger = logging.getLogger(__name__)
 
-# Fallback questions if Claude API fails
+# Fallback questions if Agent API fails
 FALLBACK_QUESTIONS = {
     "skeptic": [
         "What's your contingency if these revenue projections fall short by 30%?",
@@ -34,6 +34,42 @@ FALLBACK_QUESTIONS = {
         "Walk me through the scenario where everything goes wrong.",
         "You're assuming customers will change behavior. Why is this different from past attempts?",
         "I see a tension between your growth targets and profitability timeline. How do you reconcile that?",
+    ],
+    "technologist": [
+        "What's your technical architecture for handling 10x scale? Have you load-tested these assumptions?",
+        "You mentioned a 6-month build timeline. What's your biggest technical risk that could derail that?",
+        "Are you building this in-house or buying? What's the build-vs-buy analysis here?",
+        "How are you handling data security and compliance at the infrastructure level?",
+    ],
+    "coo": [
+        "What does the operational rollout look like? Walk me through the first 90 days.",
+        "You'll need significant headcount to execute this. What's your hiring timeline and where are the bottlenecks?",
+        "What are the key operational dependencies that could delay delivery?",
+        "How does this scale operationally? What breaks at 10x volume?",
+    ],
+    "ceo": [
+        "How does this fit into our broader three-year strategic vision?",
+        "If we fund this, what are we saying no to? What's the opportunity cost?",
+        "How do we communicate this to the board and key stakeholders?",
+        "What's our competitive moat here and how durable is it over 5 years?",
+    ],
+    "cio": [
+        "What's the expected IRR on this investment and how does it compare to our hurdle rate?",
+        "Walk me through the downside scenario. What's our maximum capital at risk?",
+        "What's the payback period and how sensitive is it to your key assumptions?",
+        "How does this fit within our current capital allocation framework?",
+    ],
+    "chro": [
+        "Do we have the talent in-house to execute this, or are we entirely dependent on new hires?",
+        "What's the retention risk for the key people driving this initiative?",
+        "How does this impact the existing team's workload and morale?",
+        "What organizational changes are needed and how do you plan to manage that transition?",
+    ],
+    "cco": [
+        "What's our regulatory exposure here? Have we run this by legal?",
+        "How does this affect our corporate reputation if it doesn't go as planned?",
+        "Are there any ESG or governance implications the board should be aware of?",
+        "What compliance frameworks apply and are we confident we can meet them on this timeline?",
     ],
 }
 
@@ -70,10 +106,9 @@ class AgentEngine:
         self.session_start_time: float = time.time()
         self.question_count: int = 0
         self.last_agent: Optional[str] = None
+        self.active_agents: list[str] = config.get("agents", ["skeptic", "analyst", "contrarian"])
         self.agent_question_counts: dict[str, int] = {
-            "skeptic": 0,
-            "analyst": 0,
-            "contrarian": 0,
+            a: 0 for a in self.active_agents
         }
 
     def _elapsed_seconds(self) -> float:
@@ -199,36 +234,29 @@ class AgentEngine:
         })
 
     def _select_next_agent(self) -> Optional[str]:
-        """Round-robin agent selection, weighted toward focus-area-relevant agents."""
-        agents = ["skeptic", "analyst", "contrarian"]
+        """Round-robin agent selection from active agents."""
+        agents = list(self.active_agents)
 
         # Don't let the same agent ask twice in a row
-        if self.last_agent:
+        if self.last_agent and len(agents) > 1:
             agents = [a for a in agents if a != self.last_agent]
 
         if not agents:
-            agents = ["skeptic", "analyst", "contrarian"]
+            agents = list(self.active_agents)
 
-        # Weight toward agents whose focus aligns with selected focus areas
-        focus_areas = set(self.config.get("focus_areas", []))
-        weighted = []
-        for agent in agents:
-            weight = 1
-            if agent == "skeptic" and focus_areas & {"Financial Projections", "Risk Assessment"}:
-                weight = 2
-            elif agent == "analyst" and focus_areas & {"Market Sizing", "Competitive Analysis", "Technical Feasibility"}:
-                weight = 2
-            elif agent == "contrarian" and focus_areas & {"Go-to-Market Strategy", "Timeline & Milestones", "Team & Execution"}:
-                weight = 2
-            weighted.extend([agent] * weight)
+        # Weight toward agents who have asked fewer questions
+        if agents:
+            min_count = min(self.agent_question_counts.get(a, 0) for a in agents)
+            weighted = [a for a in agents if self.agent_question_counts.get(a, 0) == min_count]
+            return random.choice(weighted)
 
-        return random.choice(weighted) if weighted else None
+        return None
 
     def _select_agents_for_section(self, max_count: int) -> list[str]:
         """Select up to max_count agents for a section break Q&A window."""
-        agents = ["skeptic", "analyst", "contrarian"]
+        agents = list(self.active_agents)
         # Pick 1-2 agents per section to avoid overwhelming
-        count = min(max_count, random.choice([1, 2]))
+        count = min(max_count, len(agents), random.choice([1, 2]))
         selected = random.sample(agents, count)
         return selected
 

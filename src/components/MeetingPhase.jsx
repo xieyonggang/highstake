@@ -23,11 +23,13 @@ export default function MeetingPhase() {
   } = useMeetingStore();
 
   const [started, setStarted] = useState(false);
+  const [showStartModal, setShowStartModal] = useState(false);
   const [videoStream, setVideoStream] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const [sidebarTab, setSidebarTab] = useState('participants');
-  const [captionsOn, setCaptionsOn] = useState(false);
+  const [captionsOn, setCaptionsOn] = useState(true);
   const [captionText, setCaptionText] = useState('');
+  const captionTimerRef = useRef(null);
   const chatRef = useRef(null);
   const timerRef = useRef(null);
   const socketRef = useRef(null);
@@ -38,6 +40,9 @@ export default function MeetingPhase() {
   const slides = deckManifest?.slides || DEMO_SLIDES;
   const totalSlides = slides.length;
   const deckId = deckManifest?.id;
+  const selectedAgents = AGENTS.filter(
+    (a) => a.id === 'moderator' || config.agents?.includes(a.id)
+  );
 
   // Auto-scroll chat
   useEffect(() => {
@@ -50,6 +55,7 @@ export default function MeetingPhase() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      if (captionTimerRef.current) clearTimeout(captionTimerRef.current);
       audioRef.current?.stop();
       videoRef.current?.stopCamera();
       ttsRef.current?.stop();
@@ -61,8 +67,17 @@ export default function MeetingPhase() {
     return AGENTS.find((a) => a.id === agentId) || AGENTS[0];
   }, []);
 
+  const showCaption = useCallback((text, durationMs = 0) => {
+    if (captionTimerRef.current) clearTimeout(captionTimerRef.current);
+    setCaptionText(text);
+    if (durationMs > 0) {
+      captionTimerRef.current = setTimeout(() => setCaptionText(''), durationMs);
+    }
+  }, []);
+
   const startSession = async () => {
     setStarted(true);
+    setShowStartModal(true);
     setIsRecording(true);
 
     // Start timer
@@ -95,7 +110,7 @@ export default function MeetingPhase() {
 
     // Socket event listeners
     socket.on('transcript_segment', (segment) => {
-      setCaptionText(segment.text || '');
+      showCaption(segment.text || '', segment.is_final ? 5000 : 0);
     });
 
     socket.on('agent_question', (data) => {
@@ -103,6 +118,7 @@ export default function MeetingPhase() {
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
       removeHandRaised(data.agentId);
+      showCaption(`${agent.name}: ${data.text}`, 10000);
 
       // Play TTS if available
       if (data.audioUrl && ttsRef.current) {
@@ -110,7 +126,7 @@ export default function MeetingPhase() {
           data.agentId,
           data.audioUrl,
           (id) => setActiveSpeaker(id),
-          () => clearActiveSpeaker(),
+          () => { clearActiveSpeaker(); setCaptionText(''); },
         );
       } else {
         setActiveSpeaker(data.agentId);
@@ -122,17 +138,21 @@ export default function MeetingPhase() {
       const agent = findAgent('moderator');
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
+      showCaption(`Diana Chen: ${data.text}`, 10000);
 
       if (data.audioUrl && ttsRef.current) {
         ttsRef.current.enqueue(
           'moderator',
           data.audioUrl,
           (id) => setActiveSpeaker(id),
-          () => clearActiveSpeaker(),
+          () => { clearActiveSpeaker(); setCaptionText(''); setShowStartModal(false); },
         );
       } else {
         setActiveSpeaker('moderator');
-        setTimeout(() => clearActiveSpeaker(), 3000);
+        setTimeout(() => {
+          clearActiveSpeaker();
+          setShowStartModal(false);
+        }, 3000);
       }
     });
 
@@ -150,13 +170,8 @@ export default function MeetingPhase() {
       await handleSessionEnded(data);
     });
 
-    // Send initial moderator greeting
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    addMessage({
-      agent: findAgent('moderator'),
-      text: "Good morning everyone. We're here today for a strategic presentation. Presenter, the floor is yours. We'll hold questions per the agreed format. Please begin when ready.",
-      time,
-    });
+    // Tell backend to initialize agent engine and send moderator greeting with TTS
+    socket.emit('start_session', {});
 
     // Update session status on backend
     try {
@@ -292,7 +307,7 @@ export default function MeetingPhase() {
             </p>
           </div>
           <div className="flex gap-4 justify-center mb-10">
-            {AGENTS.map((agent) => (
+            {selectedAgents.map((agent) => (
               <div key={agent.id} className="text-center">
                 <div
                   className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold mx-auto mb-2"
@@ -320,6 +335,21 @@ export default function MeetingPhase() {
 
   return (
     <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
+      {/* Session Starting Modal */}
+      {showStartModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl px-10 py-8 text-center shadow-2xl max-w-sm">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center animate-pulse">
+              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-white mb-2">Session Starting...</h3>
+            <p className="text-gray-400 text-sm">The moderator is introducing the session.</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="bg-gray-900/80 backdrop-blur border-b border-gray-800 px-6 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-4">
@@ -433,7 +463,7 @@ export default function MeetingPhase() {
               {/* Presenter Tile */}
               <PresenterTile isRecording={isRecording} isMuted={isMuted} videoStream={videoStream} />
               {/* Agent Tiles */}
-              {AGENTS.map((agent) => (
+              {selectedAgents.map((agent) => (
                 <AgentTile
                   key={agent.id}
                   agent={agent}

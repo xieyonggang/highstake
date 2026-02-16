@@ -39,15 +39,6 @@ async def disconnect(sid):
 
 
 @sio.event
-async def transcript_text(sid, data):
-    """Receive transcript text from browser Web Speech API."""
-    from app.ws.events import handle_transcript_text
-    session_id = active_sessions.get(sid)
-    if session_id:
-        await handle_transcript_text(session_id, sid, data)
-
-
-@sio.event
 async def slide_change(sid, data):
     from app.ws.events import handle_slide_change
     session_id = active_sessions.get(sid)
@@ -61,6 +52,23 @@ async def presenter_response(sid, data):
     session_id = active_sessions.get(sid)
     if session_id:
         await handle_presenter_response(session_id, sid, data)
+
+
+@sio.event
+async def start_session(sid, data):
+    from app.ws.events import handle_start_session
+    session_id = active_sessions.get(sid)
+    if session_id:
+        await handle_start_session(session_id, sid)
+
+
+@sio.event
+async def audio_chunk(sid, data):
+    """Receive PCM audio chunk from browser AudioWorklet for Gemini Live STT."""
+    from app.ws.events import handle_audio_chunk
+    session_id = active_sessions.get(sid)
+    if session_id:
+        await handle_audio_chunk(session_id, sid, data)
 
 
 @sio.event

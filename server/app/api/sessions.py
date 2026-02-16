@@ -19,6 +19,7 @@ async def create_session(
     session = Session(
         interaction_mode=payload.interaction_mode,
         intensity=payload.intensity,
+        agents=payload.agents,
         focus_areas=payload.focus_areas,
         deck_id=payload.deck_id,
         status=SessionStatus.CONFIGURING.value,

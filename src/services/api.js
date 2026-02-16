@@ -21,7 +21,7 @@ export async function createSession(config) {
     body: JSON.stringify({
       interaction_mode: config.interaction,
       intensity: config.intensity,
-      focus_areas: config.focuses,
+      agents: config.agents,
       deck_id: config.deckId || null,
     }),
   });

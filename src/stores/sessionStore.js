@@ -6,7 +6,7 @@ export const useSessionStore = create((set) => ({
   config: {
     interaction: '',
     intensity: '',
-    focuses: [],
+    agents: ['skeptic', 'analyst', 'contrarian'],
   },
   deckManifest: null,
 
@@ -21,7 +21,7 @@ export const useSessionStore = create((set) => ({
     set({
       phase: 'setup',
       sessionId: null,
-      config: { interaction: '', intensity: '', focuses: [] },
+      config: { interaction: '', intensity: '', agents: ['skeptic', 'analyst', 'contrarian'] },
       deckManifest: null,
     }),
 }));

@@ -28,6 +28,7 @@ class Session(Base, UUIDMixin, TimestampMixin):
     )
     interaction_mode: Mapped[str] = mapped_column(String(20), nullable=False)
     intensity: Mapped[str] = mapped_column(String(20), nullable=False)
+    agents: Mapped[list] = mapped_column(JSON, default=lambda: ["skeptic", "analyst", "contrarian"], nullable=False)
     focus_areas: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     deck_id: Mapped[Optional[str]] = mapped_column(
         String(36),

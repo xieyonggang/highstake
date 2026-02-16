@@ -47,23 +47,29 @@ export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev,
           <div className="text-gray-500 text-sm text-center py-8">No slide content</div>
         )}
       </div>
-      {captionText && (
-        <div className="px-4 py-2 bg-black/70 backdrop-blur flex-shrink-0">
-          <p className="text-white text-sm text-center leading-relaxed">{captionText}</p>
-        </div>
-      )}
-      <div className="px-4 py-3 flex justify-between border-t border-gray-700/50 flex-shrink-0">
+      <div className="px-4 py-3 flex items-center gap-3 border-t border-gray-700/50 flex-shrink-0">
         <button
           onClick={onPrev}
           disabled={currentSlide === 0}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-30 transition-all"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-30 transition-all flex-shrink-0"
         >
           ← Previous
         </button>
+        <div className="flex-1 min-w-0">
+          {captionText ? (
+            <p className="text-white text-xs text-center leading-relaxed line-clamp-2" title={captionText}>
+              {captionText.split(/\s+/).slice(-40).join(' ')}
+            </p>
+          ) : (
+            <p className="text-gray-600 text-xs text-center">
+              {currentSlide + 1} / {totalSlides}
+            </p>
+          )}
+        </div>
         <button
           onClick={onNext}
           disabled={currentSlide >= totalSlides - 1}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-30 transition-all"
+          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-30 transition-all flex-shrink-0"
         >
           Next →
         </button>
