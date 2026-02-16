@@ -5,6 +5,8 @@
   "description": "AI-powered boardroom simulator for high-stakes presentation practice",
   "scripts": {
     "dev": "vite",
+    "dev:server": "cd server && uvicorn app.main:socket_app --reload --port 8000",
+    "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext .js,.jsx"
@@ -12,13 +14,16 @@
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "lucide-react": "^0.263.1"
+    "lucide-react": "^0.263.1",
+    "zustand": "^4.5.0",
+    "socket.io-client": "^4.7.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
+    "concurrently": "^8.2.0",
     "eslint": "^9.0.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.13",

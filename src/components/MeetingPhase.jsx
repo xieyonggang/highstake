@@ -1,114 +1,275 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AGENTS, INTERACTION_MODES, SAMPLE_QUESTIONS } from '../utils/constants';
+import { AGENTS, INTERACTION_MODES, DEMO_SLIDES } from '../utils/constants';
+import { useSessionStore } from '../stores/sessionStore';
+import { useMeetingStore } from '../stores/meetingStore';
+import { connectSocket, disconnectSocket } from '../services/socket';
+import { AudioCaptureService } from '../services/audioCapture';
+import { VideoCaptureService } from '../services/videoCapture';
+import { TTSPlaybackService } from '../services/ttsPlayback';
+import { uploadRecording, updateSession } from '../services/api';
 import AgentTile from './AgentTile';
 import PresenterTile from './PresenterTile';
 import SlideViewer from './SlideViewer';
 import ChatMessage from './ChatMessage';
 
-export default function MeetingPhase({ config, onEnd }) {
-  const [currentSlide, setCurrentSlide] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [messages, setMessages] = useState([]);
-  const [activeSpeaker, setActiveSpeaker] = useState(null);
-  const [handsRaised, setHandsRaised] = useState([]);
-  const [transcript, setTranscript] = useState([]);
+export default function MeetingPhase() {
+  const { sessionId, config, deckManifest, setPhase } = useSessionStore();
+  const {
+    currentSlide, messages, activeSpeaker, handsRaised,
+    elapsedTime, isRecording, isMuted, isCameraOn,
+    setCurrentSlide, addMessage, setActiveSpeaker, clearActiveSpeaker,
+    addHandRaised, removeHandRaised, setElapsedTime, incrementTime,
+    setIsRecording, setIsMuted, setIsCameraOn, reset: resetMeeting,
+  } = useMeetingStore();
+
   const [started, setStarted] = useState(false);
+  const [videoStream, setVideoStream] = useState(null);
+  const [chatInput, setChatInput] = useState('');
   const chatRef = useRef(null);
   const timerRef = useRef(null);
+  const socketRef = useRef(null);
+  const audioRef = useRef(null);
+  const videoRef = useRef(null);
+  const ttsRef = useRef(null);
 
-  const totalSlides = 6;
+  const slides = deckManifest?.slides || DEMO_SLIDES;
+  const totalSlides = slides.length;
+  const deckId = deckManifest?.id;
 
-  const addMessage = useCallback((agentId, text) => {
-    const agent = AGENTS.find((a) => a.id === agentId);
-    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setMessages((prev) => [...prev, { agent, text, time }]);
-    setActiveSpeaker(agentId);
-    setTranscript((prev) => [...prev, { speaker: agent.name, role: agent.role, text, time }]);
-    setTimeout(() => setActiveSpeaker(null), 3000);
-  }, []);
-
-  const startSession = () => {
-    setStarted(true);
-    setIsRecording(true);
-    timerRef.current = setInterval(() => setElapsedTime((t) => t + 1), 1000);
-
-    setTimeout(() => {
-      addMessage(
-        'moderator',
-        "Good morning everyone. We're here today for a strategic presentation. Presenter, the floor is yours. We'll hold questions per the agreed format. Please begin when ready."
-      );
-    }, 1500);
-  };
-
+  // Auto-scroll chat
   useEffect(() => {
     if (chatRef.current) {
       chatRef.current.scrollTop = chatRef.current.scrollHeight;
     }
   }, [messages]);
 
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      audioRef.current?.stop();
+      videoRef.current?.stopCamera();
+      ttsRef.current?.stop();
+      disconnectSocket();
     };
   }, []);
 
-  // Simulate agent questions when slides advance
-  useEffect(() => {
-    if (!started || currentSlide === 0) return;
+  const findAgent = useCallback((agentId) => {
+    return AGENTS.find((a) => a.id === agentId) || AGENTS[0];
+  }, []);
 
-    const agentPool = ['skeptic', 'analyst', 'contrarian'];
-    const delay = config.interaction === 'interrupt' ? 2000 : 4000;
+  const startSession = async () => {
+    setStarted(true);
+    setIsRecording(true);
 
-    const timeout1 = setTimeout(() => {
-      if (config.interaction === 'hand-raise') {
-        const raisedAgent = agentPool[Math.floor(Math.random() * agentPool.length)];
-        setHandsRaised([raisedAgent]);
-        addMessage(
-          'moderator',
-          `I see ${AGENTS.find((a) => a.id === raisedAgent).name} has a question. Go ahead.`
+    // Start timer
+    timerRef.current = setInterval(() => incrementTime(), 1000);
+
+    // Initialize TTS playback
+    ttsRef.current = new TTSPlaybackService();
+
+    // Start webcam
+    try {
+      videoRef.current = new VideoCaptureService();
+      const stream = await videoRef.current.startCamera();
+      setVideoStream(stream);
+      videoRef.current.startRecording();
+    } catch (err) {
+      console.warn('Webcam not available:', err.message);
+    }
+
+    // Connect Socket.IO
+    const socket = connectSocket(sessionId);
+    socketRef.current = socket;
+
+    // Start audio capture
+    try {
+      audioRef.current = new AudioCaptureService(socket);
+      await audioRef.current.start();
+    } catch (err) {
+      console.warn('Microphone not available:', err.message);
+    }
+
+    // Socket event listeners
+    socket.on('transcript_segment', (segment) => {
+      // Transcript segments are shown as real-time captions (not chat messages)
+    });
+
+    socket.on('agent_question', (data) => {
+      const agent = findAgent(data.agentId);
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
+      removeHandRaised(data.agentId);
+
+      // Play TTS if available
+      if (data.audioUrl && ttsRef.current) {
+        ttsRef.current.enqueue(
+          data.agentId,
+          data.audioUrl,
+          (id) => setActiveSpeaker(id),
+          () => clearActiveSpeaker(),
         );
-        setTimeout(() => {
-          const qs = SAMPLE_QUESTIONS[raisedAgent];
-          addMessage(raisedAgent, qs[currentSlide % qs.length]);
-          setHandsRaised([]);
-        }, 2000);
       } else {
-        const agent = agentPool[currentSlide % agentPool.length];
-        const qs = SAMPLE_QUESTIONS[agent];
-        if (config.interaction === 'section') {
-          addMessage('moderator', "Let's pause for questions on this section.");
-          setTimeout(() => addMessage(agent, qs[currentSlide % qs.length]), 2000);
-        } else {
-          addMessage(agent, qs[currentSlide % qs.length]);
-        }
+        setActiveSpeaker(data.agentId);
+        setTimeout(() => clearActiveSpeaker(), 3000);
       }
-    }, delay);
+    });
 
-    const timeout2 = setTimeout(() => {
-      const secondAgent = agentPool[(currentSlide + 1) % agentPool.length];
-      const qs = SAMPLE_QUESTIONS[secondAgent];
-      addMessage(secondAgent, qs[(currentSlide + 1) % qs.length]);
-    }, delay + 6000);
+    socket.on('moderator_message', (data) => {
+      const agent = findAgent('moderator');
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
 
-    return () => {
-      clearTimeout(timeout1);
-      clearTimeout(timeout2);
-    };
-  }, [currentSlide, started, config.interaction, addMessage]);
+      if (data.audioUrl && ttsRef.current) {
+        ttsRef.current.enqueue(
+          'moderator',
+          data.audioUrl,
+          (id) => setActiveSpeaker(id),
+          () => clearActiveSpeaker(),
+        );
+      } else {
+        setActiveSpeaker('moderator');
+        setTimeout(() => clearActiveSpeaker(), 3000);
+      }
+    });
+
+    socket.on('agent_hand_raise', (data) => {
+      addHandRaised(data.agentId);
+    });
+
+    socket.on('session_state', (data) => {
+      // Could update UI state (presenting, q_and_a, ending)
+    });
+
+    socket.on('stt_error', (data) => {
+      console.warn('STT error:', data.error);
+    });
+
+    socket.on('session_ended', async (data) => {
+      await handleSessionEnded(data);
+    });
+
+    // Send initial moderator greeting
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    addMessage({
+      agent: findAgent('moderator'),
+      text: "Good morning everyone. We're here today for a strategic presentation. Presenter, the floor is yours. We'll hold questions per the agreed format. Please begin when ready.",
+      time,
+    });
+
+    // Update session status on backend
+    try {
+      await updateSession(sessionId, {
+        status: 'presenting',
+        started_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Failed to update session status:', err.message);
+    }
+  };
+
+  const handleSlideChange = (newSlide) => {
+    setCurrentSlide(newSlide);
+    socketRef.current?.emit('slide_change', { slideIndex: newSlide });
+  };
+
+  const handleSendChat = () => {
+    if (!chatInput.trim()) return;
+    socketRef.current?.emit('presenter_response', { text: chatInput.trim() });
+    setChatInput('');
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendChat();
+    }
+  };
+
+  const handleMuteToggle = () => {
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    if (newMuted) {
+      audioRef.current?.mute();
+    } else {
+      audioRef.current?.unmute();
+    }
+  };
+
+  const handleCameraToggle = () => {
+    const newState = !isCameraOn;
+    setIsCameraOn(newState);
+    videoRef.current?.toggleCamera(newState);
+  };
+
+  const endSession = async () => {
+    clearInterval(timerRef.current);
+    setIsRecording(false);
+    ttsRef.current?.stop();
+
+    // Notify server
+    socketRef.current?.emit('end_session', {});
+
+    // Update session
+    try {
+      await updateSession(sessionId, {
+        status: 'ending',
+        ended_at: new Date().toISOString(),
+        duration_secs: elapsedTime,
+      });
+    } catch (err) {
+      console.warn('Failed to update session:', err.message);
+    }
+
+    // Upload recording
+    if (videoRef.current) {
+      try {
+        const blob = await videoRef.current.stopRecording();
+        if (blob && sessionId) {
+          await uploadRecording(sessionId, blob);
+        }
+      } catch (err) {
+        console.warn('Failed to upload recording:', err.message);
+      }
+    }
+
+    // Cleanup
+    audioRef.current?.stop();
+    videoRef.current?.stopCamera();
+    disconnectSocket();
+
+    setPhase('review');
+  };
+
+  const handleSessionEnded = async (data) => {
+    // Server-initiated session end
+    clearInterval(timerRef.current);
+    setIsRecording(false);
+    ttsRef.current?.stop();
+    audioRef.current?.stop();
+
+    if (videoRef.current) {
+      try {
+        const blob = await videoRef.current.stopRecording();
+        if (blob && sessionId) {
+          await uploadRecording(sessionId, blob);
+        }
+      } catch (err) {
+        console.warn('Failed to upload recording:', err.message);
+      }
+      videoRef.current.stopCamera();
+    }
+
+    disconnectSocket();
+    setPhase('review');
+  };
 
   const formatTime = (s) =>
     `${Math.floor(s / 60)
       .toString()
       .padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 
-  const endSession = () => {
-    clearInterval(timerRef.current);
-    setIsRecording(false);
-    onEnd({ transcript, messages, duration: elapsedTime, slideCount: totalSlides });
-  };
-
+  // Pre-session ready screen
   if (!started) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -187,7 +348,7 @@ export default function MeetingPhase({ config, onEnd }) {
         {/* Left: Video Grid + Slides */}
         <div className="flex-1 p-4 flex flex-col gap-4 overflow-y-auto">
           <div className="grid grid-cols-3 gap-3">
-            <PresenterTile isRecording={isRecording} isMuted={isMuted} />
+            <PresenterTile isRecording={isRecording} isMuted={isMuted} videoStream={videoStream} />
             {AGENTS.slice(0, 2).map((agent) => (
               <AgentTile
                 key={agent.id}
@@ -210,7 +371,7 @@ export default function MeetingPhase({ config, onEnd }) {
             ))}
             <div className="col-span-1 flex items-center justify-center gap-3">
               <button
-                onClick={() => setIsMuted(!isMuted)}
+                onClick={handleMuteToggle}
                 className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all ${
                   isMuted
                     ? 'bg-red-600 text-white'
@@ -219,7 +380,14 @@ export default function MeetingPhase({ config, onEnd }) {
               >
                 {isMuted ? '🔇' : '🎤'}
               </button>
-              <button className="w-12 h-12 rounded-full bg-gray-800 text-gray-300 hover:bg-gray-700 flex items-center justify-center text-lg transition-all">
+              <button
+                onClick={handleCameraToggle}
+                className={`w-12 h-12 rounded-full flex items-center justify-center text-lg transition-all ${
+                  !isCameraOn
+                    ? 'bg-red-600 text-white'
+                    : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                }`}
+              >
                 📹
               </button>
               <button className="w-12 h-12 rounded-full bg-gray-800 text-gray-300 hover:bg-gray-700 flex items-center justify-center text-lg transition-all">
@@ -231,8 +399,10 @@ export default function MeetingPhase({ config, onEnd }) {
           <SlideViewer
             currentSlide={currentSlide}
             totalSlides={totalSlides}
-            onNext={() => setCurrentSlide((s) => Math.min(totalSlides - 1, s + 1))}
-            onPrev={() => setCurrentSlide((s) => Math.max(0, s - 1))}
+            onNext={() => handleSlideChange(Math.min(totalSlides - 1, currentSlide + 1))}
+            onPrev={() => handleSlideChange(Math.max(0, currentSlide - 1))}
+            slides={slides}
+            deckId={deckId}
           />
         </div>
 
@@ -249,7 +419,13 @@ export default function MeetingPhase({ config, onEnd }) {
               </div>
             ) : (
               messages.map((msg, i) => (
-                <ChatMessage key={i} agent={msg.agent} message={msg.text} timestamp={msg.time} />
+                <ChatMessage
+                  key={i}
+                  agent={msg.agent}
+                  message={msg.text}
+                  timestamp={msg.time}
+                  audioUrl={msg.audioUrl}
+                />
               ))
             )}
           </div>
@@ -257,10 +433,16 @@ export default function MeetingPhase({ config, onEnd }) {
             <div className="flex gap-2">
               <input
                 type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={handleKeyDown}
                 placeholder="Type a response..."
                 className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
               />
-              <button className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition-colors">
+              <button
+                onClick={handleSendChat}
+                className="px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition-colors"
+              >
                 Send
               </button>
             </div>

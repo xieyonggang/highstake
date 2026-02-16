@@ -1,19 +1,77 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { AGENTS, INTERACTION_MODES, INTENSITY_LEVELS, FOCUS_AREAS } from '../utils/constants';
+import { useSessionStore } from '../stores/sessionStore';
+import { uploadDeck, createSession } from '../services/api';
 
-export default function SetupPhase({ config, setConfig, onStart }) {
+export default function SetupPhase() {
+  const { config, setConfig, setDeckManifest, setSessionId, setPhase } = useSessionStore();
   const [step, setStep] = useState(0);
   const [uploadedFile, setUploadedFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [deckId, setDeckId] = useState(null);
+  const [isStarting, setIsStarting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const moderator = AGENTS[0];
 
   const moderatorMessages = [
     "Welcome to the Boardroom. I'm Diana Chen, and I'll be moderating your session today. Let's get you set up. First — how would you like the panel to engage with you?",
     'Got it. Now, how intense should we make this session?',
-    'Perfect. Are there specific areas you\'d like the panel to focus on?',
+    "Perfect. Are there specific areas you'd like the panel to focus on?",
     "Almost ready. Upload your presentation deck and we'll begin.",
   ];
+
+  const handleFileSelect = async (file) => {
+    if (!file) return;
+    const name = file.name.toLowerCase();
+    if (!name.endsWith('.pptx') && !name.endsWith('.pdf')) {
+      setUploadError('Only PPTX and PDF files are supported.');
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setUploadError('File size exceeds 50MB limit.');
+      return;
+    }
+
+    setUploadedFile(file);
+    setUploadError(null);
+    setIsUploading(true);
+
+    try {
+      const manifest = await uploadDeck(file);
+      setDeckManifest(manifest);
+      setDeckId(manifest.id);
+      setIsUploading(false);
+    } catch (err) {
+      setUploadError(err.message || 'Failed to upload deck. You can still use the demo deck.');
+      setIsUploading(false);
+    }
+  };
+
+  const handleUseDemoDeck = () => {
+    setUploadedFile({ name: 'Q4_Strategy_Deck.pptx', size: 2450000 });
+    setDeckId(null);
+    setUploadError(null);
+  };
+
+  const handleStart = async () => {
+    setIsStarting(true);
+    try {
+      const session = await createSession({
+        interaction: config.interaction,
+        intensity: config.intensity,
+        focuses: config.focuses,
+        deckId: deckId,
+      });
+      setSessionId(session.id);
+      setPhase('meeting');
+    } catch (err) {
+      setUploadError(err.message || 'Failed to create session.');
+      setIsStarting(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
@@ -114,56 +172,80 @@ export default function SetupPhase({ config, setConfig, onStart }) {
           )}
 
           {step === 3 && (
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOver(false);
-                const file = e.dataTransfer.files[0];
-                if (file) setUploadedFile(file);
-              }}
-              className={`border-2 border-dashed rounded-2xl p-10 text-center transition-all ${
-                dragOver
-                  ? 'border-indigo-500 bg-indigo-500/5'
-                  : uploadedFile
-                  ? 'border-emerald-500/50 bg-emerald-500/5'
-                  : 'border-gray-700 hover:border-gray-600'
-              }`}
-            >
-              {uploadedFile ? (
-                <div>
-                  <div className="text-4xl mb-3">📊</div>
-                  <div className="text-white font-semibold">{uploadedFile.name}</div>
-                  <div className="text-gray-500 text-sm mt-1">
-                    {(uploadedFile.size / 1024).toFixed(1)} KB
+            <>
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  const file = e.dataTransfer.files[0];
+                  if (file) handleFileSelect(file);
+                }}
+                className={`border-2 border-dashed rounded-2xl p-10 text-center transition-all cursor-pointer ${
+                  dragOver
+                    ? 'border-indigo-500 bg-indigo-500/5'
+                    : uploadedFile
+                    ? 'border-emerald-500/50 bg-emerald-500/5'
+                    : 'border-gray-700 hover:border-gray-600'
+                }`}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pptx,.pdf"
+                  className="hidden"
+                  onChange={(e) => handleFileSelect(e.target.files[0])}
+                />
+                {uploadedFile ? (
+                  <div>
+                    <div className="text-4xl mb-3">📊</div>
+                    <div className="text-white font-semibold">{uploadedFile.name}</div>
+                    <div className="text-gray-500 text-sm mt-1">
+                      {isUploading ? (
+                        <span className="text-indigo-400">Parsing slides...</span>
+                      ) : (
+                        `${(uploadedFile.size / 1024).toFixed(1)} KB`
+                      )}
+                    </div>
+                    {!isUploading && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setUploadedFile(null);
+                          setDeckId(null);
+                          setUploadError(null);
+                        }}
+                        className="mt-3 text-xs text-red-400 hover:text-red-300"
+                      >
+                        Remove
+                      </button>
+                    )}
                   </div>
-                  <button
-                    onClick={() => setUploadedFile(null)}
-                    className="mt-3 text-xs text-red-400 hover:text-red-300"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ) : (
-                <div>
-                  <div className="text-4xl mb-3 opacity-50">📎</div>
-                  <div className="text-gray-400 font-medium">Drop your PPTX or PDF here</div>
-                  <div className="text-gray-600 text-sm mt-1">or click to browse</div>
-                  <button
-                    onClick={() =>
-                      setUploadedFile({ name: 'Q4_Strategy_Deck.pptx', size: 2450000 })
-                    }
-                    className="mt-4 px-4 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs hover:bg-gray-700 transition-colors"
-                  >
-                    Use Demo Deck
-                  </button>
-                </div>
+                ) : (
+                  <div>
+                    <div className="text-4xl mb-3 opacity-50">📎</div>
+                    <div className="text-gray-400 font-medium">Drop your PPTX or PDF here</div>
+                    <div className="text-gray-600 text-sm mt-1">or click to browse</div>
+                  </div>
+                )}
+              </div>
+              {!uploadedFile && (
+                <button
+                  onClick={handleUseDemoDeck}
+                  className="w-full mt-2 px-4 py-2 rounded-lg bg-gray-800 text-gray-300 text-xs hover:bg-gray-700 transition-colors"
+                >
+                  Use Demo Deck
+                </button>
               )}
-            </div>
+              {uploadError && (
+                <div className="mt-2 text-red-400 text-sm text-center">{uploadError}</div>
+              )}
+            </>
           )}
         </div>
 
@@ -188,11 +270,11 @@ export default function SetupPhase({ config, setConfig, onStart }) {
             </button>
           ) : (
             <button
-              onClick={onStart}
-              disabled={!uploadedFile}
+              onClick={handleStart}
+              disabled={!uploadedFile || isUploading || isStarting}
               className="px-6 py-2.5 rounded-xl text-sm font-bold bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-500 hover:to-violet-500 disabled:opacity-30 transition-all shadow-lg shadow-indigo-500/25"
             >
-              Enter the Boardroom →
+              {isStarting ? 'Starting...' : 'Enter the Boardroom →'}
             </button>
           )}
         </div>
