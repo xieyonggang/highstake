@@ -6,6 +6,8 @@ dist
 .DS_Store
 agents/sessions/*
 !agents/sessions/.gitkeep
+agents/custom/*
+!agents/custom/.gitkeep
 
 # Python
 __pycache__/

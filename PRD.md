@@ -1375,6 +1375,409 @@ PDF report includes: session metadata (date, duration, configuration), overall a
 
 ---
 
+## 8.4 Custom Agent Builder
+
+### 8.4.1 Overview
+
+Users can customize existing panelists or create entirely new ones by providing a simple natural-language brief. The system uses a high-quality LLM (Gemini 2.0 Flash or Claude) to generate production-grade agent templates — persona.md and domain-knowledge.md — that match the quality and structure of the hand-crafted defaults.
+
+This means a user can say "I need a regulatory expert who grills me on FDA compliance" and get a fully realized panelist with a name, title, personality, questioning style, follow-up behavior, satisfaction criteria, domain expertise, and voice configuration — all auto-generated and ready for a session.
+
+### 8.4.2 User Stories
+
+**US-8: Customize Existing Panelist**
+As a presenter, I want to modify an existing panelist's focus or background so the panel better matches my real audience.
+
+Acceptance Criteria:
+- User can select any of the 4 default panelists to customize
+- User provides a natural-language modification brief (e.g., "Make Marcus more focused on biotech financials" or "Priya should have a background in clinical trials data analysis")
+- System generates an updated persona.md and domain-knowledge.md that preserves the core archetype (skeptic, analyst, contrarian, moderator) while incorporating the user's customization
+- Original default templates are never modified — the customized version is stored as a user-owned variant
+- User can preview the generated persona before using it in a session
+- User can revert to the default at any time
+
+**US-9: Create New Panelist from Scratch**
+As a presenter, I want to create a completely new panelist that represents a specific stakeholder I'll face in my real meeting.
+
+Acceptance Criteria:
+- User provides a brief describing the panelist they need (minimum: role/title, what they care about; optional: name, personality traits, industry background)
+- System generates a complete agent template: persona.md + domain-knowledge.md
+- Generated template follows the exact same structure as hand-crafted defaults (ensuring compatibility with the orchestration system, exchange logic, and TTS pipeline)
+- User can assign the new agent to one of the 4 panel seats (replacing a default panelist) or expand the panel up to 6 seats
+- User can iterate on the generated persona by providing additional instructions
+- Generated panelists are saved to the user's library for reuse across sessions
+
+**US-10: Manage Agent Library**
+As a presenter, I want to maintain a library of custom panelists so I can assemble different panels for different presentations.
+
+Acceptance Criteria:
+- User can view all their custom agents (generated + modified)
+- User can assign agents to panel seats before a session
+- User can share custom agents with team members (team plan)
+- User can duplicate and modify existing custom agents
+- User can delete custom agents they no longer need
+- Default agents (Diana, Marcus, Priya, James) are always available and cannot be deleted
+
+### 8.4.3 Agent Generation Pipeline
+
+When a user submits a brief for a new or modified agent, the system runs a multi-step generation pipeline:
+
+```
+USER INPUT                           GENERATION PIPELINE                    OUTPUT
+─────────                            ───────────────────                    ──────
+
+"I need a regulatory                 1. CLASSIFY ARCHETYPE                 agents/custom/{user_id}/
+ expert, former FDA                     Determine base role:                 regulatory_expert/
+ reviewer, who focuses                  □ Challenger (like Skeptic)           ├── persona.md
+ on compliance risk                     □ Analyst (like Analyst)              └── domain-knowledge.md
+ and approval timelines.                □ Adversary (like Contrarian)
+ She should be tough                    ■ Specialist (new archetype)
+ but fair, named                        □ Moderator variant
+ Dr. Sarah Lin."
+                                     2. GENERATE PERSONA
+                                        Feed to LLM with meta-prompt:
+                                        - User's brief
+                                        - Reference template structure
+                                        - Required fields checklist
+                                        → persona.md
+
+                                     3. GENERATE DOMAIN KNOWLEDGE
+                                        Feed to LLM with meta-prompt:
+                                        - Generated persona
+                                        - User's brief
+                                        - Reference domain-knowledge structure
+                                        - Instruction to include real frameworks,
+                                          benchmarks, and red flags for the domain
+                                        → domain-knowledge.md
+
+                                     4. VALIDATE COMPLETENESS
+                                        Check generated files against schema:
+                                        - All required sections present?
+                                        - Satisfaction criteria defined?
+                                        - Intensity scaling table complete?
+                                        - Voice configuration assigned?
+                                        - No contradictions with orchestration rules?
+                                        → Fix any gaps with targeted follow-up LLM calls
+
+                                     5. ASSIGN VOICE PROFILE
+                                        Based on persona gender, age, tone:
+                                        → Select best-matching Gemini Live voice
+                                        → Store in persona.md voice config section
+
+                                     6. PREVIEW & CONFIRM
+                                        Show user:
+                                        - Generated name, title, personality summary
+                                        - Sample questions at each intensity level
+                                        - Voice preview (short TTS sample)
+                                        → User confirms or requests changes
+```
+
+### 8.4.4 Meta-Prompts for Agent Generation
+
+The quality of generated agents depends entirely on the meta-prompts used. These are the system prompts that instruct the LLM to create agent templates.
+
+**Persona Generation Meta-Prompt:**
+
+```
+You are an expert character designer for an AI boardroom simulation product.
+Your job is to create a richly detailed panelist persona from a user's brief.
+
+USER'S BRIEF:
+{user_brief}
+
+ARCHETYPE CLASSIFICATION:
+{archetype}
+
+Generate a persona.md file with EXACTLY this structure:
+
+## Identity
+- Name, Title, Role, Agent ID, Color (hex), Avatar (initials)
+
+## Personality
+- 2-3 sentences capturing who this person is, their background, what drives them
+- Must be specific and vivid — not generic
+
+## Voice Configuration
+- Tone, Pace, Characteristics
+- Gemini Live voice recommendation
+- Speed and pitch settings
+
+## Questioning Style
+### Initial Questions (5 examples — specific to their domain, not generic)
+### Follow-Up Patterns (4 patterns — what they do when answers are vague, partial, or evasive)
+### Escalation Patterns (3 examples — their strongest, most pointed challenges)
+
+## Satisfaction Criteria
+### Will Accept (5+ items — specific types of answers that satisfy this panelist)
+### Will NOT Accept (5+ items — specific types of answers they reject)
+
+## Context Triggers
+- List of 8-12 specific topics/claims that activate this panelist's attention
+
+## Intensity Scaling
+- Table with Friendly / Moderate / Adversarial rows
+- Columns: Opening Style, Follow-Up Style, Escalation
+
+## Relationship with Other Agents
+- How this panelist interacts with each other panel member
+
+CRITICAL RULES:
+- The persona must feel like a REAL person, not a generic archetype
+- Initial questions must be specific to the domain, not usable by any panelist
+- Satisfaction criteria must be concrete and testable, not vague
+- The voice must match the personality (authoritative people get deeper voices, etc.)
+- Follow-up patterns must describe what the panelist does with bad answers — not just what they say
+```
+
+**Domain Knowledge Generation Meta-Prompt:**
+
+```
+You are an expert in {domain} creating a domain knowledge reference for an AI panelist.
+This document will be used by an LLM to generate contextually sharp questions during a
+simulated boardroom presentation.
+
+PANELIST PERSONA:
+{generated_persona_summary}
+
+USER'S BRIEF:
+{user_brief}
+
+Generate a domain-knowledge.md file with EXACTLY this structure:
+
+## Red Flags in Presentations
+- 12-15 specific patterns this expert watches for in presentations
+- Organized by category (e.g., "Regulatory Red Flags", "Data Integrity Red Flags")
+- Each red flag should explain WHY it's a concern, not just WHAT it is
+
+## Industry Benchmarks
+- Real, specific benchmarks for the relevant domain
+- Include actual numbers where possible (typical ranges, not single values)
+- Organized by metric category
+
+## Questioning Frameworks
+- 3-4 structured frameworks for how this panelist evaluates different types of claims
+- Each framework: 4-5 specific questions in logical order
+
+## Common Pitfalls This Expert Challenges
+- 6-8 common mistakes or bad practices in this domain
+- Each with: the pitfall, why presenters fall into it, and the expert's typical challenge
+
+CRITICAL RULES:
+- Use REAL domain knowledge — actual frameworks, real benchmarks, genuine best practices
+- Do NOT make up statistics — use well-known industry ranges or omit specific numbers
+- Be specific to the domain — a regulatory expert's red flags are completely different from a financial expert's
+- Frameworks should be actionable — a developer could implement them as decision trees
+- Include enough detail that an LLM reading this could ask expert-level questions
+```
+
+### 8.4.5 Validation Schema
+
+Every generated agent template is validated against this schema before being accepted:
+
+```json
+{
+  "persona": {
+    "required_sections": [
+      "Identity",
+      "Personality",
+      "Voice Configuration",
+      "Questioning Style",
+      "Questioning Style > Initial Questions (min 5)",
+      "Questioning Style > Follow-Up Patterns (min 3)",
+      "Questioning Style > Escalation Patterns (min 2)",
+      "Satisfaction Criteria > Will Accept (min 4)",
+      "Satisfaction Criteria > Will NOT Accept (min 4)",
+      "Context Triggers (min 6)",
+      "Intensity Scaling (3 levels × 3 columns)",
+      "Relationship with Other Agents"
+    ],
+    "identity_required_fields": [
+      "Name", "Title", "Role", "Agent ID", "Color", "Avatar"
+    ],
+    "voice_required_fields": [
+      "Tone", "Pace", "Gemini Live Voice", "Speed", "Pitch"
+    ]
+  },
+  "domain_knowledge": {
+    "required_sections": [
+      "Red Flags (min 8 items)",
+      "Industry Benchmarks (min 1 category)",
+      "Questioning Frameworks (min 2 frameworks × 4 questions each)",
+      "Common Pitfalls (min 4 items)"
+    ]
+  }
+}
+```
+
+If validation fails, the system runs targeted follow-up LLM calls to fill gaps — it does NOT return an incomplete template to the user.
+
+### 8.4.6 Customization of Existing Agents
+
+When modifying a default agent, the system uses a MERGE strategy — not a full regeneration:
+
+```
+MODIFICATION FLOW:
+
+1. User selects default agent (e.g., Marcus Webb — Skeptic)
+2. User provides modification brief:
+   "Make Marcus more focused on biotech financial metrics.
+    He should know about burn rate for clinical-stage companies,
+    typical Series B/C biotech raises, and FDA approval probability
+    impact on valuation."
+
+3. System reads existing persona.md and domain-knowledge.md
+
+4. LLM generates DELTA changes:
+   - persona.md: Add biotech context triggers, adjust questioning examples
+   - domain-knowledge.md: Add biotech financial benchmarks, clinical-stage
+     burn rates, FDA probability frameworks
+
+5. System MERGES deltas into copies of the originals:
+   - Core personality, voice, satisfaction criteria: PRESERVED
+   - Domain knowledge: EXTENDED with new biotech expertise
+   - Context triggers: EXTENDED with biotech-specific triggers
+   - Example questions: PARTIALLY REPLACED with biotech-relevant ones
+
+6. Result: "Marcus Webb (Biotech Variant)" — same skeptical CFO personality,
+   now armed with biotech-specific financial expertise
+```
+
+### 8.4.7 Custom Agent Storage
+
+Custom agents are stored in a user-scoped area that mirrors the template structure:
+
+```
+agents/
+├── templates/                     ← System defaults (immutable)
+│   ├── skeptic/persona.md
+│   ├── skeptic/domain-knowledge.md
+│   └── ...
+│
+├── custom/                        ← User-created and modified agents
+│   └── {user_id}/
+│       ├── library.json           ← Index of all user's custom agents
+│       ├── marcus-biotech/        ← Modified default
+│       │   ├── persona.md
+│       │   ├── domain-knowledge.md
+│       │   └── meta.json          ← Source: "modified", base: "skeptic", created: "..."
+│       ├── regulatory-expert/     ← Created from scratch
+│       │   ├── persona.md
+│       │   ├── domain-knowledge.md
+│       │   └── meta.json          ← Source: "generated", archetype: "specialist", created: "..."
+│       └── investor-vp/           ← Created from scratch
+│           ├── persona.md
+│           ├── domain-knowledge.md
+│           └── meta.json
+│
+└── sessions/{session_id}/         ← Runtime (uses whatever agents are assigned)
+    ├── shared/
+    ├── seat_1/                    ← Could be default OR custom agent
+    ├── seat_2/
+    ├── seat_3/
+    └── seat_4/
+```
+
+**Custom Agent Meta Schema:**
+
+```json
+{
+  "id": "regulatory-expert",
+  "userId": "user_abc123",
+  "name": "Dr. Sarah Lin",
+  "title": "Former FDA Reviewer",
+  "role": "Regulatory Compliance Expert",
+  "source": "generated",
+  "archetype": "specialist",
+  "baseAgent": null,
+  "userBrief": "I need a regulatory expert, former FDA reviewer, who focuses on compliance risk and approval timelines. She should be tough but fair.",
+  "createdAt": "2026-02-18T14:30:00Z",
+  "updatedAt": "2026-02-18T14:35:00Z",
+  "generationModel": "gemini-2.0-flash",
+  "validationPassed": true,
+  "sessionsUsed": 3,
+  "averageRelevanceRating": 4.2
+}
+```
+
+### 8.4.8 Session Panel Assembly
+
+Before a session, the user assembles their panel from available agents:
+
+```
+PANEL CONFIGURATION (Pre-Session Setup)
+
+Seat 1: [Moderator]  Diana Chen (default)     ← Always moderator role
+Seat 2: [Challenger]  Marcus Webb (Biotech)    ← Modified default
+Seat 3: [Analyst]     Priya Sharma (default)   ← Original default
+Seat 4: [Specialist]  Dr. Sarah Lin            ← Custom-generated
+Seat 5: [Empty]       + Add panelist           ← Optional 5th/6th seat
+
+Panel Rules:
+- Seat 1 is always a Moderator (default Diana, or custom Moderator variant)
+- Seats 2-6 can be any mix of default, modified, or custom agents
+- Minimum 3 panelists (1 moderator + 2 others), maximum 6
+- System warns if panel lacks coverage (e.g., no financial challenger)
+```
+
+When the session starts, the Orchestrator resolves each seat to the correct template:
+- Default agent → read from `agents/templates/{agent}/`
+- Custom agent → read from `agents/custom/{user_id}/{agent_id}/`
+- Session-scoped mutable files are created in `agents/sessions/{session_id}/seat_{n}/` regardless
+
+### 8.4.9 Iterative Refinement
+
+Users can refine generated agents through conversation:
+
+```
+User: "Create a regulatory expert focused on FDA compliance."
+System: [Generates Dr. Sarah Lin with persona + domain knowledge]
+System: "Here's your new panelist — Dr. Sarah Lin, former FDA reviewer.
+         Here are sample questions she'd ask at each intensity level..."
+
+User: "Good, but make her more aggressive. She should specifically
+       focus on 510(k) vs PMA pathway decisions and post-market
+       surveillance requirements."
+
+System: [LLM generates DELTA changes to persona + domain knowledge]
+System: "Updated. Dr. Lin now pushes harder on regulatory pathway
+         choices and has deep knowledge of post-market requirements.
+         Here are updated sample questions..."
+
+User: "Perfect. Save her to my library."
+System: [Stores in agents/custom/{user_id}/regulatory-expert/]
+```
+
+Each refinement iteration:
+1. Reads the current generated files
+2. Applies the user's feedback as a delta
+3. Re-validates against the schema
+4. Shows updated preview with sample questions
+5. User confirms or continues refining
+
+### 8.4.10 Quality Guardrails
+
+To ensure generated agents meet the quality bar of hand-crafted defaults:
+
+**Content Quality:**
+- Generated domain knowledge must reference real frameworks, not invented ones
+- Benchmarks must use well-known industry ranges (LLM should flag if unsure)
+- Satisfaction criteria must be concrete and testable
+- Example questions must be specific to the domain, not generic boardroom filler
+
+**Behavioral Compatibility:**
+- Generated agents must follow the same exchange protocol (SATISFIED/FOLLOW_UP/ESCALATE)
+- Intensity scaling must be defined for all three levels
+- Context triggers must be specific enough for the pre-generation pipeline
+- Voice configuration must be assigned (auto-selected based on persona characteristics)
+
+**Safety:**
+- Generated agents must not embody harmful stereotypes
+- Names and backgrounds should reflect diverse representation
+- Agent behavior must stay within professional boardroom norms regardless of user instructions
+- System rejects requests to create agents that harass, demean, or personally attack the presenter
+
+---
+
 ## 9. AI Agent Specifications
 
 ### 12.1 Agent Persona Definitions
@@ -1764,12 +2167,14 @@ Server → Client:
 - Gemini Live API integration for real-time STT (presenter speech → transcript)
 - Gemini LLM integration for dynamic, contextual agent questions with 5-layer context stack
 - Gemini Live TTS integration with distinct voices per agent
+- Session-scoped agent context system (templates/ + sessions/{id}/ architecture)
 - Background pre-generation pipeline (questions + audio buffered while presenter speaks)
 - Streaming LLM → TTS chain for follow-up questions
 - Latency compensation system (Moderator stalling, thinking indicators, lead-in phrases)
 - Multi-turn exchange system (PRESENTING → Q&A → EXCHANGE → RESOLVING state machine)
 - Agent follow-up evaluation logic (SATISFIED / FOLLOW_UP / ESCALATE)
 - Moderator exchange management (turn limits, bridge-backs, pile-on control)
+- Presenter profile tracking per agent (behavioral learning within session)
 - PPTX/PDF parsing with text, structure, and claim extraction
 - External intelligence enrichment pipeline (web search for news, market data)
 - Board Preparation Dossier generation
@@ -1780,18 +2185,28 @@ Server → Client:
 
 **Estimated Timeline:** 10-14 weeks.
 
-### Phase 3 — Polish & Scale
+### Phase 3 — Custom Agents, Polish & Scale
 
-**Goal:** Production-grade experience with enterprise features.
+**Goal:** Production-grade experience with custom panel composition and enterprise features.
 
 **Deliverables:**
+- **Custom Agent Builder:**
+  - Natural-language agent creation ("I need a regulatory expert who grills me on FDA compliance")
+  - LLM-powered generation pipeline producing persona.md + domain-knowledge.md
+  - Meta-prompts for persona generation and domain knowledge generation
+  - Validation schema ensuring generated agents meet quality bar of hand-crafted defaults
+  - Modification of existing default agents (merge strategy preserving core personality)
+  - Iterative refinement through conversation
+  - Preview with sample questions at each intensity level and voice sample
+  - User agent library (save, reuse, share, duplicate, delete)
+  - Panel assembly UI: assign any mix of default + custom agents to panel seats
+  - Support for 3-6 panelists per session (up from fixed 4)
 - Animated agent avatars with lip-sync (D-ID or HeyGen integration)
 - Session recording playback with timeline scrubbing and jump-to-exchange
 - Multi-session dashboard with improvement tracking, score trends, and exchange resilience trends
 - PDF report generation and export with exchange summaries
 - User accounts with authentication (Clerk/Auth0)
-- Team/organization accounts with shared session libraries
-- Custom agent personas (user-defined panel members with custom system prompts)
+- Team/organization accounts with shared agent libraries and session libraries
 - Presentation template library
 - Mobile-responsive debrief and dashboard
 
@@ -1870,6 +2285,10 @@ Server → Client:
 | 8 | How should we handle presenter responses during exchanges — voice only or also text? | A) Voice only (most realistic). B) Voice primary with text fallback. | Leaning B |
 | 9 | Should the Moderator have a "mercy" mode where it intervenes if the presenter seems overwhelmed? | A) Yes — detect stress signals and offer a break. B) No — the presenter chose the intensity level. | Open |
 | 10 | Should agents be able to reference the presenter's body language ("I notice you seem less confident about this slide")? | A) Phase 4 with video analysis. B) Out of scope — too intrusive. | Open |
+| 11 | Should there be a marketplace for community-created agent templates? | A) Yes — users can share/sell custom agents. B) No — keep it user-private. C) Team sharing only. | Open |
+| 12 | What LLM should power the custom agent generation pipeline? | A) Same LLM as agent intelligence (Gemini). B) Best available (Claude for generation quality, Gemini for runtime). C) User chooses. | Leaning B |
+| 13 | Should custom agents be able to replace the Moderator, or is the Moderator always Diana? | A) Moderator is customizable (e.g., different meeting culture). B) Moderator is fixed — only challenger roles are customizable. | Leaning A |
+| 14 | How many custom agents should free-tier users be able to create? | A) 0 — custom agents are Pro only. B) 1-2 custom agents on free tier. C) Unlimited creation, limited to 3 sessions/month. | Open |
 
 ---
 
@@ -1899,6 +2318,9 @@ Server → Client:
 | Gemini Live voice quality or variety insufficient | Medium | Medium | Fall back to ElevenLabs as alternative TTS provider; abstract TTS layer for swappability |
 | Pre-generation pipeline consumes too many API calls (cost) | Medium | Medium | Smart refresh triggers (only on significant context changes, not continuous); candidate caching |
 | Presenter finds multi-turn exchanges too intense | Low | Medium | Intensity level controls exchange depth; "mercy mode" as potential Phase 3 feature |
+| LLM-generated agent templates are lower quality than hand-crafted defaults | Medium | Medium | Structured meta-prompts, validation schema, required section checklist, iterative refinement loop, quality rating tracking per agent |
+| Users create agents that behave inappropriately or break session dynamics | Low | Low | Safety guardrails in generation pipeline, validation against behavioral compatibility rules, Moderator always enforces session protocol regardless of custom agent behavior |
+| Custom agent domain knowledge contains fabricated benchmarks | Medium | Medium | Meta-prompt explicitly instructs "do not invent statistics"; validation step flags unverifiable claims; user can report inaccuracies |
 
 ### C. Glossary
 
@@ -1916,3 +2338,10 @@ Server → Client:
 | Board Preparation Dossier | Pre-session report summarizing external intelligence relevant to the deck |
 | Unresolved Challenge | An exchange where the agent was not satisfied when the Moderator intervened |
 | Candidate Validation | Quick check to confirm a pre-generated question is still relevant before playing it |
+| Agent Template | Immutable persona.md + domain-knowledge.md that define an agent's character and expertise |
+| Custom Agent | User-created or user-modified panelist generated by the LLM-powered agent builder |
+| Meta-Prompt | System prompt used to instruct the LLM to generate agent templates from a user's brief |
+| Agent Library | User's collection of custom and modified agents, reusable across sessions |
+| Panel Assembly | Pre-session step where the user assigns agents to panel seats |
+| Merge Strategy | Method for modifying default agents — preserves core personality, extends domain expertise |
+| Presenter Profile | Per-agent behavioral model of the presenter, built during the session from exchange observations |
