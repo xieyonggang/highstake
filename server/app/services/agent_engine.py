@@ -287,7 +287,7 @@ class AgentEngine:
             audio_url = f"/api/resources/{rel_path}"
             logger.info(f"Using static moderator audio: {audio_url}")
         else:
-            logger.warning(f"No static moderator audio found in {common_assets_dir}")
+            logger.warning(f"No static moderator audio found matching pattern: {moderator_pattern}")
 
         await self._store_transcript_entry("moderator", text, entry_type="moderator")
 

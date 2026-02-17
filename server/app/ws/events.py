@@ -24,43 +24,29 @@ async def handle_audio_chunk(session_id: str, sid: str, data: dict):
     if not audio_b64:
         return
     
-        # logger.debug(f"Session {session_id}: Received audio chunk, size {len(audio_b64)}")
-    
-    
-    
-        try:
-    
-            pcm_bytes = base64.b64decode(audio_b64)
-    
-        except Exception:
-    
-            logger.warning(f"Session {session_id}: invalid base64 audio data")
-    
-            return
-    
-    
-    
-        # Ensure engine is initialized
-    
-        if session_id not in session_engines:
-    
-            await initialize_agent_engine(session_id)
-    
-    
-    
-        # Ensure live transcription service is running (may need separate retry)
-    
+    # logger.debug(f"Session {session_id}: Received audio chunk, size {len(audio_b64)}")
+
+    pcm_bytes = None
+    try:
+        pcm_bytes = base64.b64decode(audio_b64)
+    except Exception:
+        logger.warning(f"Session {session_id}: invalid base64 audio data")
+        return
+
+    if not pcm_bytes:
+        return
+
+    # Ensure engine is initialized
+    if session_id not in session_engines:
+        await initialize_agent_engine(session_id)
+
+    # Ensure live transcription service is running (may need separate retry)
+    live_service = session_live_services.get(session_id)
+    if not live_service:
+        await _ensure_live_service(session_id)
         live_service = session_live_services.get(session_id)
-    
-        if not live_service:
-    
-            await _ensure_live_service(session_id)
-    
-            live_service = session_live_services.get(session_id)
-    
-    
-    
-        if live_service:
+
+    if live_service:
         await live_service.send_audio(pcm_bytes)
     else:
         logger.warning(
@@ -112,20 +98,28 @@ async def handle_presenter_response(session_id: str, sid: str, data: dict):
 
 async def handle_start_session(session_id: str, sid: str):
     """Initialize agent engine and send moderator greeting with TTS."""
-    logger.info(f"Session {session_id}: starting")
+    logger.info(f"Session {session_id}: handle_start_session called")
 
     if session_id not in session_engines:
+        logger.info(f"Session {session_id}: initializing agent engine...")
         await initialize_agent_engine(session_id)
+        logger.info(f"Session {session_id}: agent engine initialization complete")
 
     engine = session_engines.get(session_id)
     if engine:
+        logger.info(f"Session {session_id}: engine found, emitting moderator greeting")
         greeting = (
             "Good morning everyone. We're here today for a strategic presentation. "
             "Presenter, the floor is yours. We'll hold questions per the agreed format. "
             "Please begin when ready."
         )
-        await engine._emit_moderator(greeting, is_static=True)
+        try:
+            await engine._emit_moderator(greeting, is_static=True)
+            logger.info(f"Session {session_id}: moderator greeting emitted")
+        except Exception as e:
+            logger.error(f"Session {session_id}: error emitting moderator greeting: {e}")
     else:
+        logger.warning(f"Session {session_id}: no engine found, emitting text-only greeting")
         # No engine (no API key) — emit text-only greeting
         await sio.emit(
             "moderator_message",
@@ -254,7 +248,7 @@ async def initialize_agent_engine(session_id: str):
             logger.info(f"Agent engine initialized for session {session_id}")
 
             # Start live transcription service (separate so engine works even if this fails)
-            await _ensure_live_service(session_id)
+            await _start_live_service_internal(session_id)
         except Exception as e:
             logger.error(f"Failed to initialize agent engine for session {session_id}: {e}")
 
@@ -265,32 +259,37 @@ async def _ensure_live_service(session_id: str):
         session_locks[session_id] = asyncio.Lock()
 
     async with session_locks[session_id]:
-        if session_id in session_live_services:
-            return
+        await _start_live_service_internal(session_id)
 
-        from app.config import settings
-        from app.services.live_transcription import LiveTranscriptionService
 
-        if not settings.gemini_api_key:
-            return
+async def _start_live_service_internal(session_id: str):
+    """Internal function to start live service, assumes lock is held if needed."""
+    if session_id in session_live_services:
+        return
 
-        async def emit_callback(event: str, data: dict):
-            await sio.emit(event, data, room=f"session_{session_id}")
+    from app.config import settings
+    from app.services.live_transcription import LiveTranscriptionService
 
-        async def on_final_transcript(segment: dict):
-            eng = session_engines.get(session_id)
-            if eng:
-                await eng.on_transcript_segment(segment)
+    if not settings.gemini_api_key:
+        return
 
-        try:
-            live_service = LiveTranscriptionService(
-                session_id=session_id,
-                api_key=settings.gemini_api_key,
-                emit_callback=emit_callback,
-                on_final_transcript=on_final_transcript,
-            )
-            await live_service.start()
-            session_live_services[session_id] = live_service
-            logger.info(f"Live transcription started for session {session_id}")
-        except Exception as e:
-            logger.error(f"Failed to start live transcription for session {session_id}: {e}")
+    async def emit_callback(event: str, data: dict):
+        await sio.emit(event, data, room=f"session_{session_id}")
+
+    async def on_final_transcript(segment: dict):
+        eng = session_engines.get(session_id)
+        if eng:
+            await eng.on_transcript_segment(segment)
+
+    try:
+        live_service = LiveTranscriptionService(
+            session_id=session_id,
+            api_key=settings.gemini_api_key,
+            emit_callback=emit_callback,
+            on_final_transcript=on_final_transcript,
+        )
+        await live_service.start()
+        session_live_services[session_id] = live_service
+        logger.info(f"Live transcription started for session {session_id}")
+    except Exception as e:
+        logger.error(f"Failed to start live transcription for session {session_id}: {e}")
