@@ -65,8 +65,6 @@ export default function ReviewPhase() {
   };
 
   const handleExportReport = async () => {
-    // Future: GET /api/sessions/:id/report for PDF
-    // For now, download debrief data as JSON
     if (!debrief) return;
     const blob = new Blob([JSON.stringify(debrief, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -110,13 +108,13 @@ export default function ReviewPhase() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-sky-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-indigo-500/20 flex items-center justify-center">
-            <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-blue-100 flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
           </div>
-          <h2 className="text-xl font-bold text-white mb-2 font-display">Generating Your Debrief</h2>
-          <p className="text-gray-400 text-sm max-w-md">
+          <h2 className="text-xl font-bold text-gray-900 mb-2 font-display">Generating Your Debrief</h2>
+          <p className="text-gray-500 text-sm max-w-md">
             The moderator is reviewing your performance and preparing personalized coaching feedback...
           </p>
         </div>
@@ -126,13 +124,13 @@ export default function ReviewPhase() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-sky-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="text-red-400 text-lg mb-4">Failed to load debrief</div>
-          <p className="text-gray-400 text-sm mb-6">{error}</p>
+          <div className="text-red-500 text-lg mb-4">Failed to load debrief</div>
+          <p className="text-gray-500 text-sm mb-6">{error}</p>
           <button
             onClick={handleRestart}
-            className="px-6 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-all"
+            className="px-6 py-3 rounded-xl text-sm font-semibold bg-blue-500 text-white hover:bg-blue-600 transition-all"
           >
             Start Over
           </button>
@@ -142,32 +140,32 @@ export default function ReviewPhase() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-sky-50 p-6">
       <div className="max-w-5xl mx-auto">
         {/* Header */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 mb-4">
-            <span className="text-emerald-400 text-xs font-semibold tracking-wider">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-100 border border-emerald-200 mb-4">
+            <span className="text-emerald-600 text-xs font-semibold tracking-wider">
               SESSION COMPLETE
             </span>
           </div>
-          <h1 className="text-4xl font-black text-white mb-2 font-display">Post-Session Debrief</h1>
-          <p className="text-gray-400">
+          <h1 className="text-4xl font-black text-gray-900 mb-2 font-display">Post-Session Debrief</h1>
+          <p className="text-gray-500">
             Duration: {Math.floor(elapsedTime / 60)}m {elapsedTime % 60}s · Slides:{' '}
             {currentSlide + 1} · Questions: {questionCount}
           </p>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-gray-900/50 p-1 rounded-xl mb-8 max-w-md mx-auto">
+        <div className="flex gap-1 bg-blue-50/80 p-1 rounded-xl mb-8 max-w-md mx-auto border border-blue-100">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all ${
                 activeTab === tab.id
-                  ? 'bg-indigo-600 text-white shadow-lg'
-                  : 'text-gray-400 hover:text-white'
+                  ? 'bg-blue-500 text-white shadow-md'
+                  : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               {tab.label}
@@ -178,17 +176,17 @@ export default function ReviewPhase() {
         {/* Summary Tab */}
         {activeTab === 'summary' && (
           <div className="grid grid-cols-2 gap-6">
-            <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-8 text-center">
-              <div className="text-6xl font-black text-white mb-2 font-display">
+            <div className="bg-white border border-blue-200/60 rounded-2xl p-8 text-center shadow-sm">
+              <div className="text-6xl font-black text-gray-900 mb-2 font-display">
                 {scores?.overall ?? '--'}
-                <span className="text-2xl text-gray-500">/100</span>
+                <span className="text-2xl text-gray-400">/100</span>
               </div>
-              <div className="text-gray-400 text-sm mb-6">Overall Presentation Score</div>
+              <div className="text-gray-500 text-sm mb-6">Overall Presentation Score</div>
               <div className="space-y-3">
                 {scoreEntries.map(([key, val]) => (
                   <div key={key} className="flex items-center gap-3">
-                    <span className="text-gray-400 text-xs w-24 text-right capitalize">{key}</span>
-                    <div className="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                    <span className="text-gray-500 text-xs w-24 text-right capitalize">{key}</span>
+                    <div className="flex-1 h-2 bg-blue-100 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-1000"
                         style={{
@@ -198,29 +196,29 @@ export default function ReviewPhase() {
                         }}
                       />
                     </div>
-                    <span className="text-white text-xs font-mono w-8">{val}</span>
+                    <span className="text-gray-700 text-xs font-mono w-8">{val}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6">
-              <h3 className="text-emerald-400 font-semibold text-sm mb-4">Strengths</h3>
+            <div className="bg-white border border-blue-200/60 rounded-2xl p-6 shadow-sm">
+              <h3 className="text-emerald-600 font-semibold text-sm mb-4">Strengths</h3>
               <div className="space-y-3">
                 {strengths.length > 0 ? (
                   strengths.map((s, i) => (
                     <div key={i} className="flex gap-3">
                       <span className="text-emerald-500 mt-0.5">✓</span>
-                      <span className="text-gray-300 text-sm leading-relaxed">{s}</span>
+                      <span className="text-gray-600 text-sm leading-relaxed">{s}</span>
                     </div>
                   ))
                 ) : (
-                  <div className="text-gray-500 text-sm">No strengths data available.</div>
+                  <div className="text-gray-400 text-sm">No strengths data available.</div>
                 )}
               </div>
             </div>
 
-            <div className="col-span-2 bg-gray-900/80 border border-gray-800 rounded-2xl p-6">
+            <div className="col-span-2 bg-white border border-blue-200/60 rounded-2xl p-6 shadow-sm">
               <div className="flex gap-4">
                 <div
                   className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
@@ -229,10 +227,10 @@ export default function ReviewPhase() {
                   {AGENTS[0].avatar}
                 </div>
                 <div>
-                  <div className="text-indigo-400 text-xs font-semibold mb-1">
+                  <div className="text-blue-600 text-xs font-semibold mb-1">
                     {AGENTS[0].name} · Moderator's Summary
                   </div>
-                  <p className="text-gray-300 text-sm leading-relaxed">
+                  <p className="text-gray-600 text-sm leading-relaxed">
                     {moderatorSummary || 'Moderator summary is being generated...'}
                   </p>
                 </div>
@@ -243,9 +241,9 @@ export default function ReviewPhase() {
 
         {/* Transcript Tab */}
         {activeTab === 'transcript' && (
-          <div className="bg-gray-900/80 border border-gray-800 rounded-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
-              <h3 className="text-white font-semibold">Full Transcript</h3>
+          <div className="bg-white border border-blue-200/60 rounded-2xl overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b border-blue-200/60 flex justify-between items-center">
+              <h3 className="text-gray-800 font-semibold">Full Transcript</h3>
               <button
                 onClick={() => {
                   const text = transcript
@@ -253,7 +251,7 @@ export default function ReviewPhase() {
                     .join('\n');
                   navigator.clipboard.writeText(text).catch(() => {});
                 }}
-                className="px-3 py-1.5 rounded-lg text-xs bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors"
+                className="px-3 py-1.5 rounded-lg text-xs bg-gray-100 text-gray-600 hover:bg-blue-100 transition-colors"
               >
                 Copy All
               </button>
@@ -281,18 +279,18 @@ export default function ReviewPhase() {
                           <span className="text-sm font-semibold" style={{ color }}>
                             {entry.speaker_name || entry.speaker}
                           </span>
-                          <span className="text-gray-600 text-xs">
+                          <span className="text-gray-400 text-xs">
                             {entry.agent_role ? `${entry.agent_role} · ` : ''}
                             {formatTimestamp(entry.start_time)}
                           </span>
                         </div>
-                        <p className="text-gray-300 text-sm mt-0.5">{entry.text}</p>
+                        <p className="text-gray-600 text-sm mt-0.5">{entry.text}</p>
                       </div>
                     </div>
                   );
                 })
               ) : (
-                <div className="text-gray-500 text-sm text-center py-8">
+                <div className="text-gray-400 text-sm text-center py-8">
                   No transcript entries recorded.
                 </div>
               )}
@@ -306,11 +304,11 @@ export default function ReviewPhase() {
             {allScoreEntries.map(([key, val]) => (
               <div
                 key={key}
-                className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 text-center"
+                className="bg-white border border-blue-200/60 rounded-2xl p-6 text-center shadow-sm"
               >
-                <div className="text-4xl font-black text-white mb-1 font-display">{val}</div>
-                <div className="text-gray-400 text-sm capitalize">{key}</div>
-                <div className="mt-4 h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div className="text-4xl font-black text-gray-900 mb-1 font-display">{val}</div>
+                <div className="text-gray-500 text-sm capitalize">{key}</div>
+                <div className="mt-4 h-2 bg-blue-100 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full"
                     style={{
@@ -331,27 +329,27 @@ export default function ReviewPhase() {
               coachingItems.map((item, i) => (
                 <div
                   key={i}
-                  className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6"
+                  className="bg-white border border-blue-200/60 rounded-2xl p-6 shadow-sm"
                 >
                   <div className="flex items-center gap-3 mb-3">
                     <span
                       className={`px-2 py-0.5 rounded-full text-xs font-bold ${
                         item.priority === 'high'
-                          ? 'bg-red-500/20 text-red-400'
+                          ? 'bg-red-100 text-red-500'
                           : item.priority === 'medium'
-                          ? 'bg-amber-500/20 text-amber-400'
-                          : 'bg-blue-500/20 text-blue-400'
+                          ? 'bg-amber-100 text-amber-600'
+                          : 'bg-blue-100 text-blue-500'
                       }`}
                     >
                       {item.priority.charAt(0).toUpperCase() + item.priority.slice(1)}
                     </span>
-                    <span className="text-white font-semibold text-sm">{item.area}</span>
+                    <span className="text-gray-800 font-semibold text-sm">{item.area}</span>
                   </div>
-                  <p className="text-gray-300 text-sm leading-relaxed">{item.detail}</p>
+                  <p className="text-gray-600 text-sm leading-relaxed">{item.detail}</p>
                 </div>
               ))
             ) : (
-              <div className="text-gray-500 text-sm text-center py-8">
+              <div className="text-gray-400 text-sm text-center py-8">
                 No coaching items available.
               </div>
             )}
@@ -362,19 +360,19 @@ export default function ReviewPhase() {
         <div className="flex justify-center gap-4 mt-10">
           <button
             onClick={handleRestart}
-            className="px-6 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
+            className="px-6 py-3 rounded-xl text-sm font-semibold bg-blue-500 text-white hover:bg-blue-600 transition-all shadow-md shadow-blue-200"
           >
             Run Another Session
           </button>
           <button
             onClick={handleExportReport}
-            className="px-6 py-3 rounded-xl text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 transition-all"
+            className="px-6 py-3 rounded-xl text-sm font-medium bg-white border border-blue-200 text-gray-600 hover:bg-blue-50 transition-all"
           >
             Export Report (JSON)
           </button>
           <button
             onClick={handleDownloadRecording}
-            className="px-6 py-3 rounded-xl text-sm font-medium bg-gray-800 text-gray-300 hover:bg-gray-700 transition-all"
+            className="px-6 py-3 rounded-xl text-sm font-medium bg-white border border-blue-200 text-gray-600 hover:bg-blue-50 transition-all"
           >
             Download Recording
           </button>

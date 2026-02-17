@@ -4,8 +4,8 @@ export const useSessionStore = create((set) => ({
   phase: 'setup',
   sessionId: null,
   config: {
-    interaction: '',
-    intensity: '',
+    interaction: 'hand-raise',
+    intensity: 'moderate',
     agents: ['skeptic', 'analyst', 'contrarian'],
   },
   deckManifest: null,

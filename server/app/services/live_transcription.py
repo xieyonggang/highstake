@@ -53,7 +53,8 @@ def _build_live_config():
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
                     voice_name="Kore"
                 )
-            )
+            ),
+            language_code="en-US",
         ),
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(

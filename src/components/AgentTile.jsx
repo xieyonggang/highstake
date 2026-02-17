@@ -5,12 +5,12 @@ export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, 
     return (
       <div
         className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-300 ${
-          isActive ? 'ring-1 ring-offset-1 ring-offset-gray-950' : ''
+          isActive ? 'ring-1 ring-offset-1 ring-offset-white' : ''
         }`}
         style={{
-          background: `linear-gradient(135deg, ${agent.color}15, ${agent.color}05)`,
+          background: `linear-gradient(135deg, ${agent.color}12, ${agent.color}06)`,
           borderColor: isActive ? agent.color : 'transparent',
-          boxShadow: isSpeaking ? `0 0 20px ${agent.color}30` : 'none',
+          boxShadow: isSpeaking ? `0 0 20px ${agent.color}20` : 'none',
         }}
       >
         <div
@@ -28,8 +28,8 @@ export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, 
           )}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-white font-semibold text-sm truncate">{agent.name}</div>
-          <div className="text-gray-400 text-xs truncate">{agent.role}</div>
+          <div className="text-gray-800 font-semibold text-sm truncate">{agent.name}</div>
+          <div className="text-gray-500 text-xs truncate">{agent.role}</div>
         </div>
         {hasHandRaised && (
           <span className="text-lg animate-bounce flex-shrink-0">✋</span>
@@ -56,12 +56,12 @@ export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, 
   return (
     <div
       className={`relative rounded-2xl overflow-hidden aspect-video transition-all duration-500 ${
-        isActive ? 'ring-2 ring-offset-2 ring-offset-gray-950' : ''
+        isActive ? 'ring-2 ring-offset-2 ring-offset-white' : ''
       }`}
       style={{
-        background: `linear-gradient(135deg, ${agent.color}22, ${agent.color}08)`,
+        background: `linear-gradient(135deg, ${agent.color}15, ${agent.color}08)`,
         borderColor: isActive ? agent.color : 'transparent',
-        boxShadow: isSpeaking ? `0 0 30px ${agent.color}40` : 'none',
+        boxShadow: isSpeaking ? `0 0 30px ${agent.color}30` : 'none',
       }}
     >
       <div className="absolute inset-0 flex flex-col items-center justify-center p-4">
@@ -79,11 +79,11 @@ export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, 
             />
           )}
         </div>
-        <div className="text-white font-semibold text-sm">{agent.name}</div>
-        <div className="text-gray-400 text-xs">{agent.title}</div>
+        <div className="text-gray-800 font-semibold text-sm">{agent.name}</div>
+        <div className="text-gray-500 text-xs">{agent.title}</div>
         <div
           className="mt-1 px-2 py-0.5 rounded-full text-xs font-medium"
-          style={{ background: `${agent.color}30`, color: agent.color }}
+          style={{ background: `${agent.color}20`, color: agent.color }}
         >
           {agent.role}
         </div>

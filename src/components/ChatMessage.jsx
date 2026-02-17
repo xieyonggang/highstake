@@ -13,7 +13,7 @@ export default function ChatMessage({ agent, message, timestamp, audioUrl }) {
   };
 
   return (
-    <div className="flex gap-3 py-3 px-4 hover:bg-white/5 rounded-xl transition-colors">
+    <div className="flex gap-3 py-3 px-4 hover:bg-blue-50/50 rounded-xl transition-colors">
       <div
         className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
         style={{ background: agent.color }}
@@ -25,18 +25,18 @@ export default function ChatMessage({ agent, message, timestamp, audioUrl }) {
           <span className="text-sm font-semibold" style={{ color: agent.color }}>
             {agent.name}
           </span>
-          <span className="text-gray-600 text-xs">{timestamp}</span>
+          <span className="text-gray-400 text-xs">{timestamp}</span>
           {audioUrl && (
             <button
               onClick={handlePlayAudio}
-              className="text-gray-500 hover:text-gray-300 text-xs transition-colors"
+              className="text-gray-400 hover:text-blue-500 text-xs transition-colors"
               title="Replay audio"
             >
               {isPlaying ? '⏸' : '🔊'}
             </button>
           )}
         </div>
-        <p className="text-gray-300 text-sm mt-0.5 leading-relaxed">{message}</p>
+        <p className="text-gray-700 text-sm mt-0.5 leading-relaxed">{message}</p>
       </div>
     </div>
   );

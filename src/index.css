@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  --color-brand: #6366f1;
+  --color-brand: #3b82f6;
   --color-skeptic: #ef4444;
   --color-analyst: #10b981;
   --color-contrarian: #f59e0b;
@@ -17,8 +17,8 @@
 
 body {
   font-family: 'DM Sans', system-ui, sans-serif;
-  background: #030712;
-  color: #e5e7eb;
+  background: #f0f7ff;
+  color: #1e293b;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -33,12 +33,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #374151;
+  background: #bfdbfe;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4b5563;
+  background: #93c5fd;
 }
 
 /* Audio waveform animation */
@@ -53,6 +53,6 @@ body {
 
 /* Glow effect for active speakers */
 .speaker-glow {
-  box-shadow: 0 0 40px var(--glow-color, rgba(99, 102, 241, 0.3));
+  box-shadow: 0 0 40px var(--glow-color, rgba(59, 130, 246, 0.2));
   transition: box-shadow 0.5s ease;
 }

@@ -10,7 +10,7 @@ export default function PresenterTile({ isRecording, isMuted, videoStream }) {
   }, [videoStream]);
 
   return (
-    <div className="relative rounded-2xl overflow-hidden aspect-video bg-gradient-to-br from-gray-800 to-gray-900 ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-950">
+    <div className="relative rounded-2xl overflow-hidden aspect-video bg-gradient-to-br from-blue-100 to-sky-100 ring-2 ring-blue-400 ring-offset-2 ring-offset-white">
       {videoStream ? (
         <video
           ref={videoRef}
@@ -21,22 +21,22 @@ export default function PresenterTile({ isRecording, isMuted, videoStream }) {
         />
       ) : (
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white text-2xl font-bold mb-3">
+          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-blue-400 to-sky-400 flex items-center justify-center text-white text-2xl font-bold mb-3">
             YOU
           </div>
-          <div className="text-white font-semibold">Presenter</div>
+          <div className="text-gray-700 font-semibold">Presenter</div>
         </div>
       )}
 
       <div className="absolute top-3 left-3 flex gap-2">
         {isRecording && (
-          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-500/20 backdrop-blur text-red-400 text-xs">
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-red-100 text-red-500 text-xs">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             REC
           </span>
         )}
         {isMuted && (
-          <span className="px-2 py-1 rounded-full bg-gray-700/80 backdrop-blur text-gray-400 text-xs">
+          <span className="px-2 py-1 rounded-full bg-gray-200/80 backdrop-blur text-gray-500 text-xs">
             🔇 Muted
           </span>
         )}

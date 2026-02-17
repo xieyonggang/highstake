@@ -22,7 +22,7 @@ export default function MeetingPhase() {
     setIsRecording, setIsMuted, setIsCameraOn, reset: resetMeeting,
   } = useMeetingStore();
 
-  const [started, setStarted] = useState(false);
+  const [ending, setEnding] = useState(false);
   const [videoStream, setVideoStream] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const [sidebarTab, setSidebarTab] = useState('participants');
@@ -50,8 +50,10 @@ export default function MeetingPhase() {
     }
   }, [messages]);
 
-  // Cleanup on unmount
+  // Auto-start session on mount and cleanup on unmount
   useEffect(() => {
+    startSession();
+
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (captionTimerRef.current) clearTimeout(captionTimerRef.current);
@@ -75,7 +77,6 @@ export default function MeetingPhase() {
   }, []);
 
   const startSession = async () => {
-    setStarted(true);
     setIsRecording(true);
 
     // Start timer
@@ -161,7 +162,6 @@ export default function MeetingPhase() {
         setActiveSpeaker('moderator');
         setTimeout(() => {
           clearActiveSpeaker();
-          setShowStartModal(false);
         }, 3000);
       }
     });
@@ -181,8 +181,16 @@ export default function MeetingPhase() {
     });
 
     // Tell backend to initialize agent engine and send moderator greeting with TTS
-    socket.emit('start_session', {});
-    socket.emit('client_debug_log', { msg: 'MeetingPhase: Emitted start_session' });
+    // Wait for socket to be connected before emitting (auto-start may fire before connection is ready)
+    const emitStart = () => {
+      socket.emit('start_session', {});
+      socket.emit('client_debug_log', { msg: 'MeetingPhase: Emitted start_session' });
+    };
+    if (socket.connected) {
+      emitStart();
+    } else {
+      socket.once('connect', emitStart);
+    }
 
     // Update session status on backend
     try {
@@ -230,6 +238,7 @@ export default function MeetingPhase() {
   };
 
   const endSession = async () => {
+    setEnding(true);
     clearInterval(timerRef.current);
     setIsRecording(false);
     ttsRef.current?.stop();
@@ -270,6 +279,7 @@ export default function MeetingPhase() {
 
   const handleSessionEnded = async (data) => {
     // Server-initiated session end
+    setEnding(true);
     clearInterval(timerRef.current);
     setIsRecording(false);
     ttsRef.current?.stop();
@@ -296,75 +306,43 @@ export default function MeetingPhase() {
       .toString()
       .padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 
-  // Pre-session ready screen
-  if (!started) {
-    return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="mb-8">
-            <div className="w-24 h-24 mx-auto rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center mb-6">
-              <span className="text-4xl">🎙</span>
-            </div>
-            <h2 className="text-3xl font-black text-white mb-2 font-display">Ready to Present</h2>
-            <p className="text-gray-400 max-w-md mx-auto">
-              Your panel is assembled. The Moderator will open the session. Mode:{' '}
-              <span className="text-indigo-400 font-medium">
-                {INTERACTION_MODES.find((m) => m.id === config.interaction)?.label}
-              </span>{' '}
-              · Intensity:{' '}
-              <span className="text-indigo-400 font-medium">
-                {config.intensity.charAt(0).toUpperCase() + config.intensity.slice(1)}
-              </span>
-            </p>
-          </div>
-          <div className="flex gap-4 justify-center mb-10">
-            {selectedAgents.map((agent) => (
-              <div key={agent.id} className="text-center">
-                <div
-                  className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold mx-auto mb-2"
-                  style={{ background: agent.color }}
-                >
-                  {agent.avatar}
-                </div>
-                <div className="text-gray-400 text-xs">{agent.name}</div>
-                <div className="text-xs font-medium" style={{ color: agent.color }}>
-                  {agent.role}
-                </div>
-              </div>
-            ))}
-          </div>
-          <button
-            onClick={startSession}
-            className="px-8 py-4 rounded-2xl text-lg font-bold bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-500 hover:to-violet-500 transition-all shadow-2xl shadow-indigo-500/30"
-          >
-            Begin Session
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
+    <div className="h-screen bg-gradient-to-br from-blue-50 via-white to-sky-50 flex flex-col overflow-hidden">
+      {/* Session Ending Modal */}
+      {ending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/70 backdrop-blur-sm">
+          <div className="bg-white border border-blue-200 rounded-2xl px-10 py-8 text-center shadow-xl max-w-sm">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-gradient-to-br from-blue-400 to-sky-400 flex items-center justify-center">
+              <svg className="w-8 h-8 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Wrapping Up Session</h3>
+            <p className="text-gray-500 text-sm">Analyzing your presentation and preparing your performance review...</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Bar */}
-      <div className="bg-gray-900/80 backdrop-blur border-b border-gray-800 px-6 py-3 flex items-center justify-between flex-shrink-0">
+      <div className="bg-white/80 backdrop-blur border-b border-blue-200/60 px-6 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-red-400 text-xs font-bold tracking-wider">LIVE SESSION</span>
+            <span className="text-red-500 text-xs font-bold tracking-wider">LIVE SESSION</span>
           </div>
-          <span className="text-gray-500 text-xs">|</span>
-          <span className="text-gray-300 text-sm font-mono">{formatTime(elapsedTime)}</span>
-          <span className="text-gray-500 text-xs">|</span>
+          <span className="text-gray-300 text-xs">|</span>
+          <span className="text-gray-700 text-sm font-mono">{formatTime(elapsedTime)}</span>
+          <span className="text-gray-300 text-xs">|</span>
           <button
             onClick={() => setCaptionsOn((v) => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
               captionsOn
-                ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/40'
-                : 'bg-gray-800 text-gray-500 hover:text-gray-300 border border-gray-700'
+                ? 'bg-blue-100 text-blue-600 border border-blue-300'
+                : 'bg-gray-100 text-gray-500 hover:text-gray-700 border border-gray-200'
             }`}
           >
-            CC
+            Transcription
           </button>
         </div>
         <div className="flex items-center gap-3">
@@ -374,7 +352,7 @@ export default function MeetingPhase() {
           </span>
           <button
             onClick={endSession}
-            className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-500 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors"
           >
             End Session
           </button>
@@ -398,13 +376,13 @@ export default function MeetingPhase() {
             />
           </div>
           {/* Bottom Controls */}
-          <div className="flex-shrink-0 px-4 py-3 border-t border-gray-800 bg-gray-900/50 flex items-center justify-center gap-3">
+          <div className="flex-shrink-0 px-4 py-3 border-t border-blue-200/60 bg-white/50 flex items-center justify-center gap-3">
             <button
               onClick={handleMuteToggle}
               className={`w-10 h-10 rounded-full flex items-center justify-center text-base transition-all ${
                 isMuted
-                  ? 'bg-red-600 text-white'
-                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  ? 'bg-red-500 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-blue-100'
               }`}
             >
               {isMuted ? '🔇' : '🎤'}
@@ -413,8 +391,8 @@ export default function MeetingPhase() {
               onClick={handleCameraToggle}
               className={`w-10 h-10 rounded-full flex items-center justify-center text-base transition-all ${
                 !isCameraOn
-                  ? 'bg-red-600 text-white'
-                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  ? 'bg-red-500 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-blue-100'
               }`}
             >
               📹
@@ -423,15 +401,15 @@ export default function MeetingPhase() {
         </div>
 
         {/* Right: Tabbed Sidebar */}
-        <div className="w-72 bg-gray-900/50 border-l border-gray-800 flex flex-col flex-shrink-0">
+        <div className="w-72 bg-white/50 border-l border-blue-200/60 flex flex-col flex-shrink-0">
           {/* Tab Row */}
-          <div className="flex border-b border-gray-800 flex-shrink-0">
+          <div className="flex border-b border-blue-200/60 flex-shrink-0">
             <button
               onClick={() => setSidebarTab('participants')}
               className={`flex-1 px-3 py-3 text-xs font-semibold transition-colors ${
                 sidebarTab === 'participants'
-                  ? 'text-white border-b-2 border-indigo-500'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'text-blue-600 border-b-2 border-blue-500'
+                  : 'text-gray-400 hover:text-gray-600'
               }`}
             >
               Participants
@@ -440,13 +418,13 @@ export default function MeetingPhase() {
               onClick={() => setSidebarTab('chat')}
               className={`flex-1 px-3 py-3 text-xs font-semibold transition-colors relative ${
                 sidebarTab === 'chat'
-                  ? 'text-white border-b-2 border-indigo-500'
-                  : 'text-gray-500 hover:text-gray-300'
+                  ? 'text-blue-600 border-b-2 border-blue-500'
+                  : 'text-gray-400 hover:text-gray-600'
               }`}
             >
               Chat
               {messages.length > 0 && sidebarTab !== 'chat' && (
-                <span className="absolute top-2 right-3 w-4 h-4 rounded-full bg-indigo-500 text-white text-[10px] flex items-center justify-center">
+                <span className="absolute top-2 right-3 w-4 h-4 rounded-full bg-blue-500 text-white text-[10px] flex items-center justify-center">
                   {messages.length > 9 ? '9+' : messages.length}
                 </span>
               )}
@@ -474,7 +452,7 @@ export default function MeetingPhase() {
             <>
               <div ref={chatRef} className="flex-1 overflow-y-auto py-2 space-y-1">
                 {messages.length === 0 ? (
-                  <div className="text-gray-600 text-sm text-center py-8">
+                  <div className="text-gray-400 text-sm text-center py-8">
                     Waiting for session to begin...
                   </div>
                 ) : (
@@ -489,7 +467,7 @@ export default function MeetingPhase() {
                   ))
                 )}
               </div>
-              <div className="p-3 border-t border-gray-800 flex-shrink-0">
+              <div className="p-3 border-t border-blue-200/60 flex-shrink-0">
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -497,11 +475,11 @@ export default function MeetingPhase() {
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="Type a response..."
-                    className="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                    className="flex-1 bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-blue-400 transition-colors"
                   />
                   <button
                     onClick={handleSendChat}
-                    className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-500 transition-colors"
+                    className="px-3 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition-colors"
                   >
                     Send
                   </button>
