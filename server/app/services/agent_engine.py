@@ -112,6 +112,7 @@ class AgentEngine:
         self.agent_question_counts: dict[str, int] = {
             a: 0 for a in self.active_agents
         }
+        self._transcript_entry_count: int = 0
 
     def _elapsed_seconds(self) -> float:
         return time.time() - self.session_start_time
@@ -263,31 +264,33 @@ class AgentEngine:
         return selected
 
     async def _emit_moderator(self, text: str, is_static: bool = False) -> None:
-        """Emit a moderator message using static audio file."""
+        """Emit a moderator message, using static audio for greeting or TTS for dynamic."""
         audio_url = None
-        
-        # Check for static audio file matching moderator*.wav in app/resources/common_assets
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        resources_dir = os.path.join(base_dir, "resources")
-        common_assets_dir = os.path.join(resources_dir, "common_assets")
-        
-        moderator_pattern = os.path.join(common_assets_dir, "moderator*.wav")
-        moderator_files = glob.glob(moderator_pattern)
-        
-        if moderator_files:
-            # Use the first matching file, sorted to be deterministic
-            moderator_files.sort()
-            selected_file = moderator_files[0]
-            
-            # Make path relative to resources_dir for serving via /api/resources/
-            rel_path = os.path.relpath(selected_file, resources_dir)
-            
-            # Ensure forward slashes for URL
-            rel_path = rel_path.replace(os.sep, '/')
-            audio_url = f"/api/resources/{rel_path}"
-            logger.info(f"Using static moderator audio: {audio_url}")
+
+        if is_static:
+            # Use pre-recorded greeting audio
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            resources_dir = os.path.join(base_dir, "resources")
+            common_assets_dir = os.path.join(resources_dir, "common_assets")
+
+            moderator_pattern = os.path.join(common_assets_dir, "moderator*.wav")
+            moderator_files = glob.glob(moderator_pattern)
+
+            if moderator_files:
+                moderator_files.sort()
+                selected_file = moderator_files[0]
+                rel_path = os.path.relpath(selected_file, resources_dir)
+                rel_path = rel_path.replace(os.sep, '/')
+                audio_url = f"/api/resources/{rel_path}"
+                logger.info(f"Using static moderator audio: {audio_url}")
         else:
-            logger.warning(f"No static moderator audio found matching pattern: {moderator_pattern}")
+            # Use TTS for dynamic moderator messages
+            try:
+                audio_url = await self.tts.synthesize(
+                    "moderator", text, session_id=self.session_id
+                )
+            except Exception as e:
+                logger.warning(f"TTS failed for moderator: {e}. Text-only.")
 
         await self._store_transcript_entry("moderator", text, entry_type="moderator")
 
@@ -319,7 +322,8 @@ class AgentEngine:
             from app.models.transcript import TranscriptEntry
 
             async with async_session_factory() as db:
-                entry_index = len(self.previous_questions) + 100  # Offset from presenter entries
+                self._transcript_entry_count += 1
+                entry_index = self._transcript_entry_count + 100  # Offset from presenter entries
                 entry = TranscriptEntry(
                     session_id=self.session_id,
                     entry_index=entry_index,

@@ -2,6 +2,8 @@ import asyncio
 import logging
 import struct
 import math
+import re
+import time
 from typing import Callable, Awaitable
 
 from google import genai
@@ -14,6 +16,19 @@ _RMS_SPEECH_THRESHOLD = 500   # RMS above this = speech detected
 _RMS_SILENCE_THRESHOLD = 300  # RMS below this = silence detected
 _SILENCE_CHUNKS_FOR_END = 8   # ~800ms of silence to end activity
 _MAX_RECONNECTS = 50          # max session reconnects before giving up
+
+# Regex to detect non-Latin scripts (Arabic, Thai, CJK, etc.)
+_NON_ENGLISH_RE = re.compile(
+    r"[\u0600-\u06FF"   # Arabic
+    r"\u0E00-\u0E7F"    # Thai
+    r"\u4E00-\u9FFF"    # CJK
+    r"\u3040-\u309F"    # Hiragana
+    r"\u30A0-\u30FF"    # Katakana
+    r"\uAC00-\uD7AF"    # Korean
+    r"\u0400-\u04FF"    # Cyrillic
+    r"\u0900-\u097F"    # Devanagari
+    r"]"
+)
 
 
 def _pcm_rms(pcm_bytes: bytes) -> float:
@@ -33,13 +48,18 @@ def _pcm_rms(pcm_bytes: bytes) -> float:
 
 
 def _is_noise_transcript(text: str) -> bool:
-    """Check if transcription is just noise/non-speech."""
+    """Check if transcription is just noise/non-speech or non-English."""
     cleaned = text.strip().lower()
-    return cleaned in (
+    if cleaned in (
         "<noise>", "(noise)", "[noise]",
         "<silence>", "(silence)", "[silence]",
         "", "ok",
-    )
+    ):
+        return True
+    # Filter out non-English transcriptions
+    if _NON_ENGLISH_RE.search(cleaned):
+        return True
+    return False
 
 
 def _build_live_config():
@@ -106,6 +126,7 @@ class LiveTranscriptionService:
         # VAD state
         self._speaking = False
         self._silence_count = 0
+        self._last_error_time: float = 0
 
     async def start(self):
         """Open a Live API session and start the receive loop."""
@@ -146,6 +167,12 @@ class LiveTranscriptionService:
 
         try:
             await self._connect()
+            # Small yield to let the session stabilize before sending audio
+            await asyncio.sleep(0.1)
+            logger.info(
+                f"Session {self.session_id}: reconnected "
+                f"(attempt {self._reconnect_count})"
+            )
             return True
         except Exception as e:
             logger.error(
@@ -184,8 +211,16 @@ class LiveTranscriptionService:
                 if rms > _RMS_SPEECH_THRESHOLD:
                     # Speech starting — reconnect if needed
                     if self._needs_reconnect or self._session is None:
+                        # Cooldown: don't retry reconnect within 1s of last error
+                        if time.monotonic() - self._last_error_time < 1.0:
+                            return
                         if not await self._ensure_connected():
                             return
+
+                    # Capture session reference to avoid race with _receive_loop
+                    session = self._session
+                    if session is None:
+                        return
 
                     self._speaking = True
                     self._silence_count = 0
@@ -193,15 +228,23 @@ class LiveTranscriptionService:
                         f"Session {self.session_id}: "
                         f"VAD speech START (rms={rms:.0f})"
                     )
-                    await self._session.send_realtime_input(
+                    await session.send_realtime_input(
                         activity_start=types.ActivityStart()
                     )
                 else:
                     # Silence and not speaking — skip
                     return
 
-            # Speaking: send audio
-            await self._session.send_realtime_input(
+            # Speaking: send audio — use local ref to avoid race
+            session = self._session
+            if session is None:
+                # Session closed mid-speech, reset VAD
+                self._speaking = False
+                self._silence_count = 0
+                self._needs_reconnect = True
+                return
+
+            await session.send_realtime_input(
                 audio=types.Blob(
                     data=pcm_bytes, mime_type="audio/pcm;rate=16000"
                 )
@@ -213,7 +256,7 @@ class LiveTranscriptionService:
                     logger.info(
                         f"Session {self.session_id}: VAD speech END"
                     )
-                    await self._session.send_realtime_input(
+                    await session.send_realtime_input(
                         activity_end=types.ActivityEnd()
                     )
                     self._speaking = False
@@ -223,12 +266,13 @@ class LiveTranscriptionService:
 
         except Exception as e:
             logger.warning(
-                f"Session {self.session_id}: error sending audio: {e}"
+                f"Session {self.session_id}: send audio error: {e}"
             )
             self._session = None
             self._needs_reconnect = True
             self._speaking = False
             self._silence_count = 0
+            self._last_error_time = time.monotonic()
 
     async def _receive_loop(self):
         """Listen for messages from the Live API session."""
@@ -296,6 +340,10 @@ class LiveTranscriptionService:
 
         # Session closed naturally — mark for lazy reconnect
         if self._running:
+            logger.info(
+                f"Session {self.session_id}: session closed, "
+                f"will reconnect on next speech"
+            )
             self._needs_reconnect = True
             self._session = None
 

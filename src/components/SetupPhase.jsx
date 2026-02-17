@@ -206,7 +206,7 @@ export default function SetupPhase() {
           <label className="text-gray-500 text-xs font-semibold tracking-wider uppercase mb-2 block">
             Your Panel
           </label>
-          <div className="flex gap-3 justify-center items-center flex-wrap">
+          <div className="flex gap-3 justify-center items-start flex-wrap">
             {selectedAgents.map((agent) => (
               <div key={agent.id} className="text-center relative group w-14">
                 <div
