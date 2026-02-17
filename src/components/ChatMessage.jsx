@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function ChatMessage({ agent, message, timestamp, audioUrl }) {
+export default function ChatMessage({ agent, message, timestamp, audioUrl, slideRef, sessionTimestamp }) {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const handlePlayAudio = () => {
@@ -12,6 +12,8 @@ export default function ChatMessage({ agent, message, timestamp, audioUrl }) {
     audio.play().catch(() => setIsPlaying(false));
   };
 
+  const slideLabel = slideRef != null ? `Slide ${slideRef + 1}` : null;
+
   return (
     <div className="flex gap-3 py-3 px-4 hover:bg-blue-50/50 rounded-xl transition-colors">
       <div
@@ -21,11 +23,16 @@ export default function ChatMessage({ agent, message, timestamp, audioUrl }) {
         {agent.avatar}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-baseline gap-2 flex-wrap">
           <span className="text-sm font-semibold" style={{ color: agent.color }}>
             {agent.name}
           </span>
-          <span className="text-gray-400 text-xs">{timestamp}</span>
+          <span className="text-gray-400 text-xs">{sessionTimestamp || timestamp}</span>
+          {slideLabel && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-500 font-medium">
+              {slideLabel}
+            </span>
+          )}
           {audioUrl && (
             <button
               onClick={handlePlayAudio}

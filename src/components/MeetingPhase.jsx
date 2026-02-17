@@ -118,10 +118,16 @@ export default function MeetingPhase() {
     });
 
     socket.on('agent_question', (data) => {
-      // ... same logic ...
       const agent = findAgent(data.agentId);
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
+      addMessage({
+        agent,
+        text: data.text,
+        time,
+        audioUrl: data.audioUrl,
+        slideRef: data.slideRef,
+        sessionTimestamp: data.timestamp,
+      });
       removeHandRaised(data.agentId);
       showCaption(`${agent.name}: ${data.text}`, 10000);
 
@@ -142,7 +148,14 @@ export default function MeetingPhase() {
       socket.emit('client_debug_log', { msg: 'MeetingPhase: received moderator_message' });
       const agent = findAgent('moderator');
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
+      addMessage({
+        agent,
+        text: data.text,
+        time,
+        audioUrl: data.audioUrl,
+        slideRef: data.slideRef,
+        sessionTimestamp: data.timestamp,
+      });
       showCaption(`Diana Chen: ${data.text}`, 10000);
 
       if (data.audioUrl && ttsRef.current) {
@@ -463,6 +476,8 @@ export default function MeetingPhase() {
                       message={msg.text}
                       timestamp={msg.time}
                       audioUrl={msg.audioUrl}
+                      slideRef={msg.slideRef}
+                      sessionTimestamp={msg.sessionTimestamp}
                     />
                   ))
                 )}

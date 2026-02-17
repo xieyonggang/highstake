@@ -18,6 +18,26 @@ INTENSITY_INSTRUCTIONS = {
     ),
 }
 
+# Shared context block that gets injected into all agent prompts
+_CONTEXT_BLOCK = """
+{presentation_summary_block}
+Presentation slide overview:
+{all_slides_context}
+
+Current slide ({slide_index}/{total_slides}):
+Title: {slide_title}
+Content: {slide_content}
+Speaker notes: {slide_notes}
+
+What the presenter has said on this slide:
+{current_slide_speech_text}
+
+Presentation transcript so far:
+{transcript}
+
+Questions already asked this session:
+{previous_questions}"""
+
 
 MODERATOR_SYSTEM_PROMPT = """You are Diana Chen, Chief of Staff, moderating a boardroom presentation.
 Your role: manage turn-taking, pacing, transitions, and session flow.
@@ -44,23 +64,14 @@ Personality: Experienced, direct, slightly impatient. Has seen many pitches fail
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question. Reference specific claims or data from the presentation.
 - Be direct but professional. Do not repeat questions already asked.
 - Stay in character as Marcus Webb, CFO.
 - If the focus areas include financial topics, prioritize those.
+- Reference what the presenter actually said — quote or paraphrase their words when challenging a claim.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the CFO..." - just ask the question directly."""
 
@@ -72,23 +83,14 @@ Personality: Thorough, methodical, genuinely curious. Wants to understand the de
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question. Reference specific data or methodology from the presentation.
 - Be thorough but professional. Do not repeat questions already asked.
 - Stay in character as Priya Sharma, VP of Strategy.
 - Focus on data quality, sample sizes, methodology, benchmarks, and evidence.
+- Reference what the presenter actually said — ask about specific claims they made.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the VP..." - just ask the question directly."""
 
@@ -100,17 +102,7 @@ Personality: Experienced, philosophical, enjoys poking holes. Plays devil's advo
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question that challenges assumptions or explores failure scenarios.
@@ -118,6 +110,7 @@ Guidelines:
 - Stay in character as James O'Brien, Board Advisor.
 - Focus on unstated assumptions, logical dependencies, single points of failure, worst-case scenarios.
 - Do NOT repeat the Skeptic's concerns about numbers - challenge logic, not numbers.
+- Reference what the presenter actually said — find contradictions or gaps in their reasoning.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As a board advisor..." - just ask the question directly."""
 
@@ -129,23 +122,14 @@ Personality: Sharp, pragmatic, hands-on. Has built and scaled systems from start
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question about technical architecture, scalability, engineering timeline, or tech debt.
 - Be practical but professional. Do not repeat questions already asked.
 - Stay in character as Rachel Kim, CTO.
 - Focus on build vs buy, technical risks, infrastructure costs, team capability, integration complexity.
+- Reference what the presenter actually said about technology or timelines.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the CTO..." - just ask the question directly."""
 
@@ -157,23 +141,14 @@ Personality: Pragmatic, detail-oriented, execution-focused. Turns strategy into 
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question about operational execution, resource needs, process bottlenecks, or delivery risk.
 - Be practical but professional. Do not repeat questions already asked.
 - Stay in character as Sandra Mitchell, COO.
 - Focus on headcount, timelines, dependencies, operational complexity, and execution risk.
+- Reference what the presenter actually said about operations or delivery.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the COO..." - just ask the question directly."""
 
@@ -185,23 +160,14 @@ Personality: Big-picture thinker, decisive, charismatic. Connects dots across th
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question about strategic fit, vision alignment, market positioning, or stakeholder value.
 - Be visionary but grounded. Do not repeat questions already asked.
 - Stay in character as Michael Zhang, CEO.
 - Focus on how this fits the company's broader strategy, competitive moat, and long-term value creation.
+- Reference what the presenter actually said about strategy or vision.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the CEO..." - just ask the question directly."""
 
@@ -213,23 +179,14 @@ Personality: Analytical, measured, risk-aware. Thinks in terms of portfolios, re
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question about investment returns, capital requirements, risk profile, or portfolio impact.
 - Be analytical but professional. Do not repeat questions already asked.
 - Stay in character as Robert Adeyemi, Chief Investment Officer.
 - Focus on IRR, payback period, opportunity cost, downside protection, and capital efficiency.
+- Reference what the presenter actually said about financials or investment.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the CIO..." - just ask the question directly."""
 
@@ -241,23 +198,14 @@ Personality: People-focused, strategic, perceptive. Understands that execution d
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question about team readiness, hiring plans, organizational structure, or talent risk.
 - Be thoughtful but professional. Do not repeat questions already asked.
 - Stay in character as Lisa Nakamura, CHRO.
 - Focus on key hires, skill gaps, team bandwidth, retention risk, and organizational design.
+- Reference what the presenter actually said about team or people.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the CHRO..." - just ask the question directly."""
 
@@ -269,23 +217,14 @@ Personality: Cautious, thorough, risk-conscious. Protects the company from blind
 {intensity_instruction}
 
 Focus areas requested by presenter: {focus_areas}
-
-Current slide ({slide_index}/{total_slides}):
-Title: {slide_title}
-Content: {slide_content}
-Speaker notes: {slide_notes}
-
-Presentation transcript so far:
-{transcript}
-
-Questions already asked this session:
-{previous_questions}
+""" + _CONTEXT_BLOCK + """
 
 Guidelines:
 - Ask ONE focused question about regulatory risk, compliance, governance, reputation, or ESG impact.
 - Be thorough but professional. Do not repeat questions already asked.
 - Stay in character as Thomas Brennan, Chief Corporate Officer.
 - Focus on legal exposure, regulatory landscape, board governance, public perception, and ethical considerations.
+- Reference what the presenter actually said about compliance or risk.
 - Keep your question under 3 sentences.
 - Do NOT start with your name or "As the CCO..." - just ask the question directly."""
 
@@ -356,6 +295,9 @@ def build_agent_prompt(
     previous_questions: list[str],
     elapsed_time: float = 0,
     context_block: str = "",
+    presentation_summary: str = "",
+    current_slide_speech: str = "",
+    all_slides_context: str = "",
 ) -> str:
     """Build the complete system prompt for a specific agent."""
     template = AGENT_PROMPTS.get(agent_id)
@@ -365,6 +307,22 @@ def build_agent_prompt(
     intensity_instruction = INTENSITY_INSTRUCTIONS.get(intensity, INTENSITY_INSTRUCTIONS["moderate"])
     focus_str = ", ".join(focus_areas) if focus_areas else "No specific focus areas selected"
     prev_q_str = "\n".join(f"- {q}" for q in previous_questions) if previous_questions else "None yet"
+
+    # Build presentation summary block
+    if presentation_summary:
+        presentation_summary_block = (
+            "Presentation summary so far (what was covered on previous slides):\n"
+            f"{presentation_summary}\n"
+        )
+    else:
+        presentation_summary_block = ""
+
+    # Current slide speech
+    current_slide_speech_text = current_slide_speech if current_slide_speech else "The presenter hasn't spoken on this slide yet."
+
+    # All slides context
+    if not all_slides_context:
+        all_slides_context = "(No slide overview available)"
 
     kwargs = {
         "intensity": intensity,
@@ -380,6 +338,9 @@ def build_agent_prompt(
         "elapsed_time": elapsed_time,
         "context_block": context_block,
         "interaction_mode": "",
+        "presentation_summary_block": presentation_summary_block,
+        "current_slide_speech_text": current_slide_speech_text,
+        "all_slides_context": all_slides_context,
     }
 
     return template.format(**kwargs)

@@ -116,6 +116,13 @@ class AgentEngine:
     def _elapsed_seconds(self) -> float:
         return time.time() - self.session_start_time
 
+    def _format_elapsed_time(self) -> str:
+        """Format elapsed seconds as MM:SS string."""
+        elapsed = int(self._elapsed_seconds())
+        minutes = elapsed // 60
+        seconds = elapsed % 60
+        return f"{minutes:02d}:{seconds:02d}"
+
     async def on_transcript_segment(self, segment: dict) -> None:
         """Called when a new transcript segment arrives from STT."""
         self.context.add_segment(segment)
@@ -127,6 +134,9 @@ class AgentEngine:
         """Called when presenter advances slides."""
         old_slide = self.current_slide
         self.current_slide = slide_index
+
+        # Notify context manager about slide change for per-slide tracking
+        self.context.on_slide_change(slide_index, self.deck_manifest)
 
         mode = self.config["interaction_mode"]
 
@@ -198,6 +208,9 @@ class AgentEngine:
             transcript=context.get("transcript_text", ""),
             previous_questions=[q["text"] for q in self.previous_questions],
             elapsed_time=self._elapsed_seconds(),
+            presentation_summary=context.get("presentation_summary", ""),
+            current_slide_speech=context.get("current_slide_speech", ""),
+            all_slides_context=context.get("all_slides_context", ""),
         )
 
         try:
@@ -209,8 +222,9 @@ class AgentEngine:
             logger.warning(f"Gemini API failed for {agent_id}: {e}. Using fallback.")
             question_text = self._get_fallback_question(agent_id)
 
+        elapsed = self._elapsed_seconds()
         self.previous_questions.append({"agent_id": agent_id, "text": question_text})
-        self.last_question_time = self._elapsed_seconds()
+        self.last_question_time = elapsed
         self.last_agent = agent_id
         self.question_count += 1
         self.agent_question_counts[agent_id] = self.agent_question_counts.get(agent_id, 0) + 1
@@ -233,6 +247,8 @@ class AgentEngine:
             "text": question_text,
             "audioUrl": audio_url,
             "slideRef": self.current_slide,
+            "timestamp": self._format_elapsed_time(),
+            "elapsedSeconds": elapsed,
         })
 
     def _select_next_agent(self) -> Optional[str]:
@@ -265,23 +281,23 @@ class AgentEngine:
     async def _emit_moderator(self, text: str, is_static: bool = False) -> None:
         """Emit a moderator message using static audio file."""
         audio_url = None
-        
+
         # Check for static audio file matching moderator*.wav in app/resources/common_assets
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         resources_dir = os.path.join(base_dir, "resources")
         common_assets_dir = os.path.join(resources_dir, "common_assets")
-        
+
         moderator_pattern = os.path.join(common_assets_dir, "moderator*.wav")
         moderator_files = glob.glob(moderator_pattern)
-        
+
         if moderator_files:
             # Use the first matching file, sorted to be deterministic
             moderator_files.sort()
             selected_file = moderator_files[0]
-            
+
             # Make path relative to resources_dir for serving via /api/resources/
             rel_path = os.path.relpath(selected_file, resources_dir)
-            
+
             # Ensure forward slashes for URL
             rel_path = rel_path.replace(os.sep, '/')
             audio_url = f"/api/resources/{rel_path}"
@@ -296,6 +312,9 @@ class AgentEngine:
             "audioUrl": audio_url,
             "agentName": AGENT_NAMES["moderator"],
             "agentRole": AGENT_ROLES["moderator"],
+            "slideRef": self.current_slide,
+            "timestamp": self._format_elapsed_time(),
+            "elapsedSeconds": self._elapsed_seconds(),
         })
 
     def _get_fallback_question(self, agent_id: str) -> str:
