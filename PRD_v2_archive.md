@@ -1,10 +1,9 @@
 # HighStake — Product Requirements Document
 
-**Version:** 3.0
+**Version:** 2.0
 **Last Updated:** February 18, 2026
 **Status:** Active Development
 **North Star:** Every session should feel indistinguishable from a real boardroom — zero awkward silences, contextually sharp questions, natural multi-turn exchanges, and seamless flow between challenge and presentation.
-**Key Architecture Principle:** Agent personas are immutable templates; each session spawns isolated, session-scoped context folders that accumulate live intelligence. The character never changes — only what they know grows.
 
 ---
 
@@ -14,18 +13,17 @@
 2. [User Stories & Personas](#2-user-stories--personas)
 3. [System Architecture](#3-system-architecture)
 4. [Real-Time Architecture: Eliminating the Latency Gap](#4-real-time-architecture-eliminating-the-latency-gap)
-5. [Session-Scoped Agent Context System](#5-session-scoped-agent-context-system)
-6. [Context Stack Architecture](#6-context-stack-architecture)
-7. [Multi-Turn Exchange System](#7-multi-turn-exchange-system)
-8. [Feature Specifications](#8-feature-specifications)
-9. [AI Agent Specifications](#9-ai-agent-specifications)
-10. [Data Models](#10-data-models)
-11. [API Contracts](#11-api-contracts)
-12. [Non-Functional Requirements](#12-non-functional-requirements)
-13. [Phased Delivery Plan](#13-phased-delivery-plan)
-14. [Success Metrics](#14-success-metrics)
-15. [Open Questions & Decisions](#15-open-questions--decisions)
-16. [Appendix](#16-appendix)
+5. [Context Stack Architecture](#5-context-stack-architecture)
+6. [Multi-Turn Exchange System](#6-multi-turn-exchange-system)
+7. [Feature Specifications](#7-feature-specifications)
+8. [AI Agent Specifications](#8-ai-agent-specifications)
+9. [Data Models](#9-data-models)
+10. [API Contracts](#10-api-contracts)
+11. [Non-Functional Requirements](#11-non-functional-requirements)
+12. [Phased Delivery Plan](#12-phased-delivery-plan)
+13. [Success Metrics](#13-success-metrics)
+14. [Open Questions & Decisions](#14-open-questions--decisions)
+15. [Appendix](#15-appendix)
 
 ---
 
@@ -483,245 +481,11 @@ ACTUAL COMPUTATION TIME: 4-6 seconds (hidden behind Moderator + lead-in)
 
 ---
 
-## 5. Session-Scoped Agent Context System
+## 5. Context Stack Architecture
 
-### 5.1 Core Principle: Immutable Character, Mutable Context
-
-Every AI panelist in HighStake has two layers of information:
-
-**Immutable Layer (Template)** — The agent's persona, domain knowledge, voice configuration, questioning style, satisfaction criteria, and behavioral rules. These NEVER change during or between sessions. Marcus Webb is always the skeptical CFO with deep financial expertise. His character, voice, and approach are constants — just like a real person.
-
-**Mutable Layer (Session-Scoped)** — Everything the agent learns, observes, and produces during a specific session. What claims they've seen in the deck, what external news is relevant, what questions they've asked, how the presenter responded, what's unresolved, and what they're planning to ask next. This context is created fresh for each session, accumulates throughout the session, and is archived when the session ends.
-
-This mirrors how real board members work: their expertise and personality don't change between meetings, but what they know about THIS specific presentation does.
-
-### 12.2 Directory Architecture
-
-```
-agents/
-│
-├── templates/                           ← IMMUTABLE: checked into Git, never modified at runtime
-│   ├── moderator/
-│   │   ├── persona.md                   ← Diana Chen's identity, personality, voice
-│   │   ├── orchestration.md             ← State machine rules, turn limits, coordination logic
-│   │   └── phrase-library.md            ← Master library of transition/stalling/bridge phrases
-│   │
-│   ├── skeptic/
-│   │   ├── persona.md                   ← Marcus Webb's identity, style, satisfaction criteria
-│   │   └── domain-knowledge.md          ← Financial benchmarks, red flags, frameworks
-│   │
-│   ├── analyst/
-│   │   ├── persona.md                   ← Priya Sharma's identity, style, satisfaction criteria
-│   │   └── domain-knowledge.md          ← Data quality frameworks, statistical methods, benchmarks
-│   │
-│   └── contrarian/
-│       ├── persona.md                   ← James O'Brien's identity, style, satisfaction criteria
-│       └── domain-knowledge.md          ← Logical fallacies, precedents, contradiction patterns
-│
-└── sessions/                            ← MUTABLE: created at runtime, one folder per session
-    └── {session_id}/
-        │
-        ├── shared/                      ← Context shared across all agents for THIS session
-        │   ├── session-config.md        ← Interaction mode, intensity, focus areas, duration
-        │   ├── deck-content.md          ← Parsed slide text, claims, cross-slide dependencies
-        │   ├── external-intel.md        ← Recent news, market data, competitive intelligence
-        │   ├── board-dossier.md         ← Pre-session intelligence briefing
-        │   ├── presenter-transcript.md  ← Running transcript of presenter's speech (Layer 2)
-        │   └── exchange-history.md      ← All exchanges, outcomes, claim tracking
-        │
-        ├── moderator/                   ← Diana's session-specific mutable state
-        │   ├── session-state.md         ← Live: current state, slide, time, topics, queue
-        │   ├── generated-phrases.md     ← Session-specific phrases (referencing actual agent names/topics)
-        │   └── debrief-notes.md         ← Accumulating notes for post-session summary
-        │
-        ├── skeptic/                     ← Marcus's session-specific mutable state
-        │   ├── focus-brief.md           ← Claims to challenge, deck weaknesses, external intel for Marcus
-        │   ├── exchange-notes.md        ← Marcus's questions, responses, evaluations, patterns observed
-        │   ├── candidate-question.md    ← Current pre-generated question buffer
-        │   └── presenter-profile.md     ← How this presenter handles financial challenges
-        │
-        ├── analyst/                     ← Priya's session-specific mutable state
-        │   ├── focus-brief.md
-        │   ├── exchange-notes.md
-        │   ├── candidate-question.md
-        │   └── presenter-profile.md
-        │
-        └── contrarian/                  ← James's session-specific mutable state
-            ├── focus-brief.md
-            ├── exchange-notes.md
-            ├── candidate-question.md
-            └── presenter-profile.md
-```
-
-### 12.3 Session Lifecycle
-
-```
-SESSION CREATION                              SESSION ACTIVE                        SESSION END
-─────────────────                             ──────────────                        ───────────
-
-1. Create session folder:                     4. Mutable files update              7. Archive session:
-   agents/sessions/{session_id}/                 continuously:                        - Freeze all mutable files
-                                                                                     - Generate final debrief
-2. Populate shared/ context:                     - presenter-transcript.md            - Store session folder in
-   - Parse deck → deck-content.md                  (every STT segment)                 persistent storage
-   - Run enrichment → external-intel.md          - exchange-history.md              
-   - Generate → board-dossier.md                   (after each exchange)            8. Session folder becomes
-   - Write → session-config.md                   - exchange-notes.md                  read-only archive for
-                                                   (after each turn)                  review/playback
-3. Generate agent focus briefs:                  - candidate-question.md
-   - Read templates/{agent}/persona.md             (every 15s, on slide change)     9. Templates are UNTOUCHED
-     + domain-knowledge.md                       - session-state.md                   — ready for next session
-   - Cross-reference with deck-content.md          (continuously)
-     + external-intel.md                         - presenter-profile.md
-   - Write → sessions/{id}/{agent}/                (after each exchange)
-     focus-brief.md                              - generated-phrases.md
-                                                   (as agents are selected)
-   Templates are READ, never WRITTEN.            - debrief-notes.md
-   Session files are CREATED and UPDATED.          (accumulating)
-
-                                              5. Pre-generation pipeline reads:
-                                                 template persona + domain
-                                                 + session mutable context
-                                                 → generates candidate questions
-
-                                              6. Context assembly combines:
-                                                 IMMUTABLE (from templates/)
-                                                 + MUTABLE (from sessions/{id}/)
-                                                 → feeds to LLM for each agent call
-```
-
-### 12.4 Context Assembly at Runtime
-
-When the Orchestrator needs to generate a question or follow-up for an agent, it reads files from BOTH the immutable templates and the mutable session folder:
-
-```
-CONTEXT PAYLOAD FOR AGENT CALL:
-
-┌─────────────────────────────────────────────────────────────────┐
-│  FROM templates/{agent}/  (IMMUTABLE — never changes)           │
-│                                                                 │
-│  1. persona.md              — Who am I? How do I speak?         │
-│  2. domain-knowledge.md     — What expertise do I bring?        │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  FROM sessions/{id}/shared/ (MUTABLE — grows during session)    │
-│                                                                 │
-│  3. session-config.md       — Rules of this session             │
-│  4. deck-content.md         — What is the presenter showing?    │
-│  5. external-intel.md       — What's happening in the world?    │
-│  6. presenter-transcript.md — What has the presenter said?      │
-│  7. exchange-history.md     — What has the panel discussed?     │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  FROM sessions/{id}/{agent}/ (MUTABLE — agent's personal state) │
-│                                                                 │
-│  8. focus-brief.md          — What should I focus on?           │
-│  9. exchange-notes.md       — What have I personally asked?     │
-│  10. presenter-profile.md   — How does this presenter respond?  │
-│  11. candidate-question.md  — What am I planning to ask next?   │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-For the Moderator, the assembly replaces domain-knowledge with orchestration.md, and adds session-state.md, generated-phrases.md, and debrief-notes.md.
-
-### 12.5 File Classification: Immutable vs. Mutable
-
-| File | Location | Mutability | Created When | Updated When |
-|------|----------|-----------|-------------|-------------|
-| persona.md | templates/{agent}/ | IMMUTABLE | Product development | Product version changes only |
-| domain-knowledge.md | templates/{agent}/ | IMMUTABLE | Product development | Periodically (new benchmarks, frameworks) |
-| orchestration.md | templates/moderator/ | IMMUTABLE | Product development | Product version changes only |
-| phrase-library.md | templates/moderator/ | IMMUTABLE | Product development | When new phrase patterns are added |
-| session-config.md | sessions/{id}/shared/ | MUTABLE (write-once) | Session creation | Never (frozen at start) |
-| deck-content.md | sessions/{id}/shared/ | MUTABLE (write-once) | Deck parsing | Never (frozen after parsing) |
-| external-intel.md | sessions/{id}/shared/ | MUTABLE (write-few) | Deck enrichment | Optionally if new topics emerge mid-session |
-| board-dossier.md | sessions/{id}/shared/ | MUTABLE (write-once) | Deck enrichment | Never (frozen after generation) |
-| presenter-transcript.md | sessions/{id}/shared/ | MUTABLE (append-only) | First speech detected | Every STT segment (continuous) |
-| exchange-history.md | sessions/{id}/shared/ | MUTABLE (append-only) | First exchange | After every exchange resolves |
-| session-state.md | sessions/{id}/moderator/ | MUTABLE (overwrite) | Session start | Continuously (Moderator's live state) |
-| generated-phrases.md | sessions/{id}/moderator/ | MUTABLE (append) | Session start | As agents are selected to speak |
-| debrief-notes.md | sessions/{id}/moderator/ | MUTABLE (append-only) | First notable event | After exchanges, at time warnings, at session end |
-| focus-brief.md | sessions/{id}/{agent}/ | MUTABLE (write-once) | Session start | Never (frozen after generation) |
-| exchange-notes.md | sessions/{id}/{agent}/ | MUTABLE (append-only) | First exchange involving this agent | After every turn in the agent's exchanges |
-| candidate-question.md | sessions/{id}/{agent}/ | MUTABLE (overwrite) | First pre-generation cycle | Every 15s, on slide change, after exchanges |
-| presenter-profile.md | sessions/{id}/{agent}/ | MUTABLE (append-only) | After first exchange | After each exchange (behavioral observations) |
-
-### 12.6 Presenter Profile (New — Per-Agent Learning Within Session)
-
-Each agent builds a `presenter-profile.md` during the session that captures how THIS presenter handles their type of challenge. This makes follow-up questions progressively smarter:
-
-```markdown
-# Presenter Profile — As Observed by Marcus Webb (Skeptic)
-
-## Response Patterns Under Financial Challenge
-
-- **When challenged on projections:** Provides new data points (good)
-- **When challenged on methodology:** Deflects to "our model shows" (weak)
-- **When caught in contradiction:** Gets flustered, repeats prior answer (vulnerability)
-- **When given room to elaborate:** Shares useful detail willingly (strength)
-
-## Data Readiness Assessment
-- Has supporting data for revenue claims: Yes
-- Has supporting data for margin claims: Partially
-- Has stress-test / sensitivity data: No — this is a gap
-
-## Behavioral Notes
-- Tends to rush through financial slides — may be uncomfortable with the data
-- Uses hedging language ("I think", "probably") when discussing margins
-- Becomes more confident and specific when discussing product/technology
-
-## Recommended Strategy for Remaining Session
-- Push harder on margin methodology — presenter doesn't have backup data
-- When asking about financials, give presenter time — they reveal more when not rushed
-- Reference the 28% downside figure they mentioned earlier — they may not realize they disclosed it
-```
-
-This profile is READ by the agent during context assembly but WRITTEN by the Orchestrator based on transcript analysis. It makes each subsequent exchange smarter — the agent learns the presenter's tells within the session.
-
-### 12.7 Session Archival & Reuse
-
-When a session ends:
-
-1. All mutable files are frozen (marked read-only)
-2. The complete session folder is archived to persistent storage (S3/R2)
-3. The session folder structure is preserved exactly for playback and review
-4. The debrief engine reads the entire session folder to generate scores, coaching, and the Moderator's summary
-
-**For repeat sessions with the same deck:**
-- A new session folder is created from scratch
-- Templates are re-read (same immutable personas)
-- Deck content and external intel may be refreshed (deck might be updated, news will be newer)
-- Prior session's presenter-profile.md can optionally be carried forward (Phase 4 feature — persistent agent memory)
-- All other mutable files start empty — the agents don't remember the prior session by default
-
-**For the dashboard:**
-- Session archives are queryable: scores, exchange counts, unresolved challenges
-- Presenter-profile evolution across sessions can be tracked (Phase 4)
-
-### 12.8 Storage & Cleanup
-
-| Content | Storage | Retention |
-|---------|---------|-----------|
-| Templates (agents/templates/) | Git repository | Permanent — version controlled |
-| Active session (agents/sessions/{id}/) | Server filesystem or memory-mapped | Duration of session |
-| Archived session | S3/R2 as compressed archive | Per user plan (30 days free, unlimited Pro) |
-| Session recordings (video/audio) | S3/R2 | Per user plan |
-
-Estimated storage per session:
-- Mutable markdown files: ~50-100KB (text is compact)
-- Deck content: 100-500KB (depending on deck size)
-- Session recording: ~500MB (20 min at 720p)
-
----
-
-## 6. Context Stack Architecture
-
-### 12.1 Overview
+### 5.1 Overview
 
 The quality of agent questions is directly proportional to the richness and relevance of the context. HighStake uses a **5-layer context stack** — each layer adds a dimension of intelligence that makes agent questions feel genuinely informed rather than generically challenging.
-
-The context stack is assembled at runtime by reading files from both `agents/templates/` (immutable) and `agents/sessions/{id}/` (mutable). See Section 5 for the complete file mapping.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -747,7 +511,7 @@ The context stack is assembled at runtime by reading files from both `agents/tem
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 12.2 Layer 1: Deck Content (Static, Pre-Loaded)
+### 5.2 Layer 1: Deck Content (Static, Pre-Loaded)
 
 This is the foundation. Before the session starts, the deck is parsed into a structured representation. The agent knows not just what's on the current slide but what's coming later — just like a real board member who flipped through the printed deck before the meeting.
 
@@ -787,7 +551,7 @@ Slide Manifest Schema:
 }
 ```
 
-### 12.3 Layer 2: Presenter's Live Transcript
+### 5.3 Layer 2: Presenter's Live Transcript
 
 This is the real-time layer — what the presenter has actually said, which is often different from what's on the slides. A good board member listens for the gaps between what's written and what's spoken.
 
@@ -814,7 +578,7 @@ Transcript Segment Schema:
 }
 ```
 
-### 12.4 Layer 3: Session Memory (Panel Dialogue History)
+### 5.4 Layer 3: Session Memory (Panel Dialogue History)
 
 Without this layer, agents operate in isolation and ask redundant questions. With it, they build on each other like a real panel.
 
@@ -863,7 +627,7 @@ Session Memory Schema:
 }
 ```
 
-### 12.5 Layer 4: Domain Knowledge (LLM Training Knowledge)
+### 5.5 Layer 4: Domain Knowledge (LLM Training Knowledge)
 
 The LLM brings deep expertise that makes agents feel like real domain experts rather than generic question machines.
 
@@ -875,7 +639,7 @@ The Contrarian (Board Advisor persona) draws on: historical precedents of failed
 
 This layer is activated by explicit system prompt instructions: "Draw on your knowledge of industry benchmarks, historical precedents, and established frameworks to evaluate the presenter's claims. If their projections deviate from industry norms, call it out with specifics."
 
-### 12.6 Layer 5: External Intelligence (Real-Time Enrichment)
+### 5.6 Layer 5: External Intelligence (Real-Time Enrichment)
 
 This layer makes agents terrifyingly well-prepared — the kind of board member who reads the morning news before your meeting.
 
@@ -920,7 +684,7 @@ Deck parsed → Extract entities and claims
 
 **Refresh Strategy:** The bulk of external intelligence is gathered once during deck parsing (pre-session). The system does NOT re-search during the live session to avoid latency impact. However, if the presenter mentions a company, person, or event not covered in the initial briefing, the Orchestrator can queue a lightweight background search for the next pre-generation cycle.
 
-### 12.7 Complete Context Assembly
+### 5.7 Complete Context Assembly
 
 Here's the full context payload assembled for each agent call:
 
@@ -969,7 +733,7 @@ INSTRUCTION:
   Stay in character.
 ```
 
-### 12.8 Context Window Management
+### 5.8 Context Window Management
 
 For sessions longer than 20 minutes, the full context will be large. The system implements a tiered compression strategy:
 
@@ -985,7 +749,7 @@ For sessions longer than 20 minutes, the full context will be large. The system 
 
 Target context payload: 8,000-15,000 tokens per agent call. This fits comfortably within Gemini 2.0 Flash's context window while keeping response latency low.
 
-### 12.9 The Board Preparation Dossier (Pre-Session Feature)
+### 5.9 The Board Preparation Dossier (Pre-Session Feature)
 
 The context enrichment process produces a valuable artifact: the **Board Preparation Dossier**. This can be shown to the presenter before the session as a "here's what your panel will come armed with" preview.
 
@@ -995,9 +759,9 @@ This gives the presenter a chance to prepare their defenses before the simulatio
 
 ---
 
-## 7. Multi-Turn Exchange System
+## 6. Multi-Turn Exchange System
 
-### 12.1 The Problem with One-Shot Q&A
+### 6.1 The Problem with One-Shot Q&A
 
 A naive implementation treats agent interaction as: agent asks question → presenter answers → next slide. This feels robotic and misses the most valuable part of a boardroom: the follow-up.
 
@@ -1010,7 +774,7 @@ In a real boardroom, a challenge often becomes a 2-4 turn exchange:
 
 This dynamic is where presenters learn the most — and where HighStake must excel.
 
-### 12.2 Session State Machine
+### 6.2 Session State Machine
 
 The session operates in five states. The EXCHANGE state is the core innovation.
 
@@ -1040,7 +804,7 @@ The session operates in five states. The EXCHANGE state is the core innovation.
 
 **RESOLVING** — Moderator wraps up the exchange, optionally allows one pile-on from another agent, logs the exchange outcome and any unresolved challenges, and speaks a natural bridge-back phrase to return to the presentation.
 
-### 12.3 Exchange Turn Logic
+### 6.3 Exchange Turn Logic
 
 When the presenter answers an agent's question, the active agent receives an evaluation prompt:
 
@@ -1085,7 +849,7 @@ Respond as JSON:
 }
 ```
 
-### 12.4 Exchange Turn Limits
+### 6.4 Exchange Turn Limits
 
 The Moderator enforces maximum turns to prevent runaway exchanges:
 
@@ -1099,7 +863,7 @@ A "turn" = one agent statement + one presenter response.
 
 If the agent returns SATISFIED before hitting the limit, the exchange ends early and moves to RESOLVING.
 
-### 12.5 Cross-Agent Pile-Ons
+### 6.5 Cross-Agent Pile-Ons
 
 After the primary exchange resolves, another agent may want to add a related point. This creates powerful moments: "Building on what Marcus just raised about margins — if your downside scenario shows 28%, your break-even timeline on slide 11 needs to be revised too."
 
@@ -1126,7 +890,7 @@ RESOLVING STATE:
       Diana: "Let's continue." → PRESENTING
 ```
 
-### 12.6 Moderator Bridge-Back Patterns
+### 6.6 Moderator Bridge-Back Patterns
 
 The Moderator's bridge-back from an exchange to the presentation must feel natural, not abrupt. The bridge should accomplish three things: acknowledge the exchange, signal to the presenter they can continue, and set up context for the next section.
 
@@ -1145,7 +909,7 @@ The Moderator's bridge-back from an exchange to the presentation must feel natur
 **When presenter went off-script during the exchange:**
 "You brought up some new data points in that exchange that weren't in the deck. That's useful context. Let's get back to the slides — I believe you were on the competitive landscape."
 
-### 12.7 Exchange Integration with Latency Architecture
+### 6.7 Exchange Integration with Latency Architecture
 
 Multi-turn exchanges create a latency challenge: follow-up questions can't be pre-generated because they depend on what the presenter just said. Here's how the system adapts:
 
@@ -1193,7 +957,7 @@ PRESENTING STATE (resumed):
 
 The slightly higher latency on follow-up turns (500-800ms) actually feels MORE natural than the initial question, because in a real boardroom, a person pauses to process the answer before responding.
 
-### 12.8 Exchange Example with Full Timing
+### 6.8 Exchange Example with Full Timing
 
 ```
 [00:00] PRESENTING STATE
@@ -1263,13 +1027,13 @@ Total exchange: 25 seconds. Natural, productive, with zero awkward silences. The
 
 ---
 
-## 8. Feature Specifications
+## 7. Feature Specifications
 
-### 12.1 Phase 1: Pre-Session Setup
+### 7.1 Phase 1: Pre-Session Setup
 
 The Moderator agent (Diana Chen) guides the presenter through configuration in a conversational, step-by-step flow.
 
-#### 12.1.1 Interaction Mode Selection
+#### 7.1.1 Interaction Mode Selection
 
 | Mode | Behavior | Agent Trigger | Moderator Role |
 |------|----------|---------------|----------------|
@@ -1279,7 +1043,7 @@ The Moderator agent (Diana Chen) guides the presenter through configuration in a
 
 All three modes support multi-turn exchanges — the interaction mode only controls when the initial question is triggered, not the depth of the resulting exchange.
 
-#### 12.1.2 Intensity Level Configuration
+#### 7.1.2 Intensity Level Configuration
 
 | Level | Initial Question Style | Exchange Depth | Follow-Up Aggression | Moderator Patience |
 |-------|----------------------|----------------|---------------------|-------------------|
@@ -1287,11 +1051,11 @@ All three modes support multi-turn exchanges — the interaction mode only contr
 | Moderate | Direct, demands justification | 3 turns max | Pushes on gaps, accepts good answers | Steps in if circular |
 | Adversarial | Aggressive, expresses doubt | 4 turns max | Escalates, points out contradictions | Only steps in at limit |
 
-#### 12.1.3 Focus Area Selection
+#### 7.1.3 Focus Area Selection
 
 The presenter selects one or more focus areas. These areas are injected into each agent's system prompt and influence the external intelligence enrichment. Available focus areas: Financial Projections, Go-to-Market Strategy, Competitive Analysis, Technical Feasibility, Team & Execution, Market Sizing, Risk Assessment, Timeline & Milestones. Custom focus areas can be typed in by the presenter.
 
-#### 12.1.4 Deck Upload & Enrichment
+#### 7.1.4 Deck Upload & Enrichment
 
 Accepted formats: PPTX (preferred), PDF. Max file size: 50MB. Max slides: 100.
 
@@ -1308,13 +1072,13 @@ Processing pipeline:
 
 Full pipeline completes within 30 seconds for a 20-slide deck. Parsing and enrichment run in parallel.
 
-### 12.2 Phase 2: Live Boardroom Session
+### 7.2 Phase 2: Live Boardroom Session
 
-#### 12.2.1 Video Conference UI Layout
+#### 7.2.1 Video Conference UI Layout
 
 The interface mimics a familiar video conference layout. The presenter's webcam feed occupies one tile (highlighted with a blue ring). Four AI agent tiles display avatars, names, titles, and role badges. Active speaker detection highlights the current speaker's tile with a glow effect and audio waveform animation. A thinking indicator (pulsing dots) appears on agent tiles during follow-up processing. A slide viewer panel shows the current slide with navigation controls. A chat panel on the right displays all agent messages with timestamps. A top bar shows session timer, interaction mode indicator, exchange turn counter, recording status, and "End Session" button.
 
-#### 12.2.2 Presenter Capture Pipeline
+#### 7.2.2 Presenter Capture Pipeline
 
 ```
 Browser Mic → MediaRecorder API → Audio Chunks (WebM/Opus, 250ms intervals)
@@ -1331,13 +1095,13 @@ Browser Camera → MediaStream → Video Element (self-view)
 Audio: 16kHz minimum (48kHz preferred), WebM/Opus, echo cancellation + noise suppression enabled.
 Video: 720p minimum, 30fps, WebM/VP9.
 
-#### 12.2.3 Agent Audio Playback
+#### 7.2.3 Agent Audio Playback
 
 Agent audio arrives as streaming chunks from Gemini Live TTS. The client maintains a per-agent audio playback queue. When an agent speaks, their tile animates (waveform bars, glow effect). Other agent tiles dim slightly. The presenter's tile shows a "listening" state during agent speech. Audio chunks are buffered minimally (50-100ms) for smooth playback without gaps.
 
-### 12.3 Phase 3: Post-Session Debrief
+### 7.3 Phase 3: Post-Session Debrief
 
-#### 12.3.1 Scoring Model
+#### 7.3.1 Scoring Model
 
 | Dimension | Weight | Signals |
 |-----------|--------|---------|
@@ -1353,7 +1117,7 @@ Filler words tracked: "um", "uh", "like", "you know", "basically", "actually", "
 
 Hedging language tracked: "I think", "maybe", "probably", "I guess", "hopefully", "we'll see", "it depends".
 
-#### 12.3.2 Debrief Tabs
+#### 7.3.2 Debrief Tabs
 
 **Summary Tab:** Overall score with radial progress indicator, category score bars, top 4 strengths with specific examples, Moderator's narrative summary, and exchange highlight reel (the most intense exchange, summarized).
 
@@ -1365,19 +1129,19 @@ Hedging language tracked: "I think", "maybe", "probably", "I guess", "hopefully"
 
 **Unresolved Challenges Tab:** List of exchanges where the agent was NOT satisfied when the Moderator stepped in. Each entry shows the original claim, the challenge, the presenter's responses, why it remained unresolved, and a suggested preparation strategy for the real meeting.
 
-#### 12.3.3 Moderator's Summary Generation
+#### 7.3.3 Moderator's Summary Generation
 
 The Moderator's post-session summary is generated via a dedicated Gemini call with: full transcript, all exchange data with outcomes, scoring results, slide content, session configuration, external context briefing, and comparison to previous sessions if available. The summary is 200-300 words, written in first person as Diana Chen, covering overall impression, strongest moment, most critical unresolved challenge, exchange handling assessment, one specific tactical recommendation, and encouragement.
 
-#### 12.3.4 Report Export
+#### 7.3.4 Report Export
 
 PDF report includes: session metadata (date, duration, configuration), overall and dimension scores, strengths and improvement areas, exchange summaries with outcomes, unresolved challenges with preparation recommendations, full transcript, external context briefing used, and Moderator's summary. Generated server-side.
 
 ---
 
-## 9. AI Agent Specifications
+## 8. AI Agent Specifications
 
-### 12.1 Agent Persona Definitions
+### 8.1 Agent Persona Definitions
 
 #### Diana Chen — The Moderator
 
@@ -1435,7 +1199,7 @@ PDF report includes: session metadata (date, duration, configuration), overall a
 | Intensity Scaling | Friendly: "Have you considered what happens if...?" Moderate: "There's a tension here between X and Y..." Adversarial: "This entire thesis collapses if..." |
 | Voice | Gravelly, deliberate pace, thoughtful pauses, occasionally provocative |
 
-### 12.2 Agent Coordination Rules
+### 8.2 Agent Coordination Rules
 
 - No two agents should ask about the same specific claim simultaneously
 - The Moderator tracks which topics have been covered and steers agents toward uncovered areas
@@ -1446,7 +1210,7 @@ PDF report includes: session metadata (date, duration, configuration), overall a
 - Total agent speaking time should not exceed 40% of the session; the presenter should speak at least 60%
 - During an exchange, only the active agent and the presenter speak — other agents and the Moderator observe silently (except for Moderator micro-phrases)
 
-### 12.3 Gemini Live Voice Configuration
+### 8.3 Gemini Live Voice Configuration
 
 Each agent requires a distinct voice profile in Gemini Live:
 
@@ -1461,9 +1225,9 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 
 ---
 
-## 10. Data Models
+## 9. Data Models
 
-### 12.1 User
+### 9.1 User
 
 ```json
 {
@@ -1479,7 +1243,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.2 Session
+### 9.2 Session
 
 ```json
 {
@@ -1515,7 +1279,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.3 Exchange Record
+### 9.3 Exchange Record
 
 ```json
 {
@@ -1586,7 +1350,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.4 Transcript Entry
+### 9.4 Transcript Entry
 
 ```json
 {
@@ -1605,7 +1369,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.5 Debrief Coaching Item
+### 9.5 Debrief Coaching Item
 
 ```json
 {
@@ -1620,9 +1384,9 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 
 ---
 
-## 11. API Contracts
+## 10. API Contracts
 
-### 12.1 REST Endpoints
+### 10.1 REST Endpoints
 
 ```
 POST   /api/sessions                  Create a new session with configuration
@@ -1646,7 +1410,7 @@ GET    /api/users/me/sessions         List user's session history
 GET    /api/users/me/stats            Get aggregate stats (avg score, trends)
 ```
 
-### 12.2 WebSocket Events
+### 10.2 WebSocket Events
 
 ```
 Client → Server:
@@ -1675,9 +1439,9 @@ Server → Client:
 
 ---
 
-## 12. Non-Functional Requirements
+## 11. Non-Functional Requirements
 
-### 12.1 Performance
+### 11.1 Performance
 
 | Metric | Target | Critical Threshold |
 |--------|--------|--------------------|
@@ -1691,7 +1455,7 @@ Server → Client:
 | Page Load | < 2s initial load | < 4s |
 | Recording Start | < 500ms from session start | < 1s |
 
-### 12.2 Scalability
+### 11.2 Scalability
 
 - Support 100 concurrent sessions at launch
 - Scale to 1,000 concurrent sessions within 6 months
@@ -1700,7 +1464,7 @@ Server → Client:
 - Deck storage: 10GB per 1,000 users
 - Recording storage: 500MB per session (20-minute session at 720p)
 
-### 12.3 Reliability
+### 11.3 Reliability
 
 - 99.9% uptime for the web application
 - Graceful degradation: if TTS fails, fall back to text-only with chat panel
@@ -1710,7 +1474,7 @@ Server → Client:
 - Recording buffer: 60 seconds local buffer before upload
 - Pre-generation pipeline failures should never block the live session
 
-### 12.4 Security & Privacy
+### 11.4 Security & Privacy
 
 - All data encrypted at rest (AES-256) and in transit (TLS 1.3)
 - Presentation decks are private to the uploading user by default
@@ -1721,7 +1485,7 @@ Server → Client:
 - User can delete all data (recordings, transcripts, decks) at any time
 - External enrichment searches do not include presenter name or company in queries (privacy)
 
-### 12.5 Browser Support
+### 11.5 Browser Support
 
 - Chrome 100+ (primary)
 - Firefox 100+ (secondary)
@@ -1729,7 +1493,7 @@ Server → Client:
 - Edge 100+ (secondary)
 - Mobile browsers: responsive design for review/debrief, but live session requires desktop
 
-### 12.6 Accessibility
+### 11.6 Accessibility
 
 - WCAG 2.1 AA compliance for all non-session UI
 - Keyboard navigation for setup and debrief phases
@@ -1739,7 +1503,7 @@ Server → Client:
 
 ---
 
-## 13. Phased Delivery Plan
+## 12. Phased Delivery Plan
 
 ### Phase 1 — MVP (Complete)
 
@@ -1818,9 +1582,9 @@ Server → Client:
 
 ---
 
-## 14. Success Metrics
+## 13. Success Metrics
 
-### 14.1 Product Metrics
+### 13.1 Product Metrics
 
 | Metric | Phase 1 | Phase 2 | Phase 3 |
 |--------|---------|---------|---------|
@@ -1832,7 +1596,7 @@ Server → Client:
 | Debrief Engagement (all tabs) | 40% | 55% | 70% |
 | NPS Score | — | 40+ | 55+ |
 
-### 14.2 Technical Metrics — Real-Time Performance
+### 13.2 Technical Metrics — Real-Time Performance
 
 | Metric | Target |
 |--------|--------|
@@ -1845,7 +1609,7 @@ Server → Client:
 | Session Recording Success Rate | > 99% |
 | System Uptime | 99.9% |
 
-### 14.3 Business Metrics (Post-Launch)
+### 13.3 Business Metrics (Post-Launch)
 
 | Metric | 6-Month Target | 12-Month Target |
 |--------|----------------|-----------------|
@@ -1856,7 +1620,7 @@ Server → Client:
 
 ---
 
-## 15. Open Questions & Decisions
+## 14. Open Questions & Decisions
 
 | # | Question | Options | Status |
 |---|----------|---------|--------|
@@ -1873,7 +1637,7 @@ Server → Client:
 
 ---
 
-## 16. Appendix
+## 15. Appendix
 
 ### A. Competitive Landscape
 

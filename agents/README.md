@@ -1,76 +1,116 @@
 # Agent Context System
 
-Each AI panelist in HighStake has a dedicated folder that stores their persona definition, domain knowledge, session context, and real-time intelligence. These markdown files are assembled into the agent's context payload before each LLM call.
+## Core Principle
 
-## Folder Structure
+**Agent character is immutable. Agent context is session-scoped.**
+
+Every AI panelist has a fixed identity (persona, domain expertise, voice, questioning style) that NEVER changes. What changes is what they KNOW — the deck content, external news, transcript, exchange history, and observations about the presenter. This mutable context is created fresh for each session.
+
+## Directory Structure
 
 ```
 agents/
-├── README.md                  ← You are here
-├── shared/                    ← Context shared across all agents
-│   ├── session-config.md      ← Current session configuration
-│   ├── deck-content.md        ← Parsed deck text, claims, structure
-│   ├── external-intel.md      ← News, market data, competitive moves
-│   ├── board-dossier.md       ← Pre-session Board Preparation Dossier
-│   └── exchange-history.md    ← All exchanges, outcomes, unresolved challenges
+├── README.md                              ← You are here
 │
-├── moderator/                 ← Diana Chen — The Moderator
-│   ├── persona.md             ← Identity, personality, voice
-│   ├── orchestration.md       ← Turn-taking rules, state machine, bridge-backs
-│   ├── session-state.md       ← Live: current state, topics covered, time tracking
-│   └── phrases.md             ← Pre-generated transition and stalling phrases
+├── templates/                             ← IMMUTABLE: Git-versioned, read-only at runtime
+│   ├── moderator/
+│   │   ├── persona.md                     ← Diana Chen: identity, personality, voice, rules
+│   │   ├── orchestration.md               ← State machine, turn limits, coordination logic
+│   │   └── phrase-library.md              ← Master library of all transition/stalling phrases
+│   ├── skeptic/
+│   │   ├── persona.md                     ← Marcus Webb: identity, style, satisfaction criteria
+│   │   └── domain-knowledge.md            ← Financial benchmarks, red flags, frameworks
+│   ├── analyst/
+│   │   ├── persona.md                     ← Priya Sharma: identity, style, satisfaction criteria
+│   │   └── domain-knowledge.md            ← Data quality frameworks, statistical methods
+│   └── contrarian/
+│       ├── persona.md                     ← James O'Brien: identity, style, satisfaction criteria
+│       └── domain-knowledge.md            ← Logical fallacies, precedents, contradiction patterns
 │
-├── skeptic/                   ← Marcus Webb — The Skeptic
-│   ├── persona.md             ← Identity, personality, voice, questioning style
-│   ├── domain-knowledge.md    ← Financial frameworks, benchmarks, red flags
-│   ├── focus-brief.md         ← Session-specific: claims to challenge, deck weaknesses
-│   ├── exchange-notes.md      ← Live: questions asked, responses received, evaluations
-│   └── candidate-question.md  ← Pre-generated question buffer (refreshed continuously)
+├── session-templates/                     ← BLUEPRINTS: copied into each new session
+│   ├── shared/
+│   │   ├── session-config.md              ← Session parameters (populated at start)
+│   │   ├── presenter-transcript.md        ← Running transcript (append-only during session)
+│   │   └── exchange-history.md            ← All exchanges and outcomes (append-only)
+│   ├── moderator/
+│   │   ├── session-state.md               ← Live tracking (overwritten continuously)
+│   │   └── debrief-notes.md               ← Accumulating notes for post-session summary
+│   └── {skeptic,analyst,contrarian}/
+│       ├── focus-brief.md                 ← Claims to target (generated at session start)
+│       ├── exchange-notes.md              ← Personal exchange log (append-only)
+│       ├── candidate-question.md          ← Pre-generated question buffer (overwritten)
+│       └── presenter-profile.md           ← Behavioral observations (append-only)
 │
-├── analyst/                   ← Priya Sharma — The Analyst
-│   ├── persona.md
-│   ├── domain-knowledge.md
-│   ├── focus-brief.md
-│   ├── exchange-notes.md
-│   └── candidate-question.md
-│
-└── contrarian/                ← James O'Brien — The Contrarian
-    ├── persona.md
-    ├── domain-knowledge.md
-    ├── focus-brief.md
-    ├── exchange-notes.md
-    └── candidate-question.md
+└── sessions/                              ← RUNTIME: one folder per active/archived session
+    └── {session_id}/
+        ├── shared/                        ← Includes deck-content.md, external-intel.md,
+        │   │                                 board-dossier.md (generated, not from templates)
+        │   ├── session-config.md
+        │   ├── deck-content.md
+        │   ├── external-intel.md
+        │   ├── board-dossier.md
+        │   ├── presenter-transcript.md
+        │   └── exchange-history.md
+        ├── moderator/
+        │   ├── session-state.md
+        │   ├── generated-phrases.md
+        │   └── debrief-notes.md
+        ├── skeptic/
+        │   ├── focus-brief.md
+        │   ├── exchange-notes.md
+        │   ├── candidate-question.md
+        │   └── presenter-profile.md
+        ├── analyst/
+        │   └── (same structure)
+        └── contrarian/
+            └── (same structure)
 ```
 
-## How Context is Assembled
+## Session Lifecycle
 
-When the Orchestrator needs to generate a question or follow-up for an agent, it assembles the context by reading files in this order:
+### 1. Session Created
+```
+Copy session-templates/ → sessions/{session_id}/
+Parse deck → write deck-content.md, external-intel.md, board-dossier.md
+Read templates/{agent}/persona.md + domain-knowledge.md
+  + deck-content.md + external-intel.md
+  → Generate focus-brief.md for each agent
+```
 
-1. `agents/{agent}/persona.md` — Who am I?
-2. `agents/shared/session-config.md` — What are the rules of this session?
-3. `agents/shared/deck-content.md` — What is the presenter showing? (Layer 1)
-4. `agents/shared/external-intel.md` — What's happening in the real world? (Layer 5)
-5. `agents/{agent}/domain-knowledge.md` — What expertise do I bring? (Layer 4)
-6. `agents/{agent}/focus-brief.md` — What should I focus on in this session?
-7. `agents/shared/exchange-history.md` — What has the panel discussed so far? (Layer 3)
-8. `agents/{agent}/exchange-notes.md` — What have I personally asked and heard?
-9. `agents/{agent}/candidate-question.md` — What am I planning to ask next?
+### 2. Session Active
+```
+Templates are READ-ONLY — character never changes
+Session files are UPDATED — context accumulates:
+  - presenter-transcript.md    (every STT segment)
+  - exchange-history.md        (after each exchange)
+  - exchange-notes.md          (after each turn)
+  - candidate-question.md      (every 15s, on slide change)
+  - presenter-profile.md       (after each exchange)
+  - session-state.md           (continuously)
+  - debrief-notes.md           (at key moments)
+```
 
-For the Moderator, the assembly is slightly different — it reads `orchestration.md` and `session-state.md` instead of domain knowledge and focus briefs.
+### 3. Session Ended
+```
+Freeze all session files → archive to S3/R2
+Templates remain untouched → ready for next session
+Session folder becomes read-only archive for review
+```
 
-## Update Frequency
+## Context Assembly Order (Per Agent Call)
 
-| File | Updated When |
-|------|-------------|
-| `persona.md` | Static — only changes between product versions |
-| `domain-knowledge.md` | Static — updated periodically with new frameworks/benchmarks |
-| `session-config.md` | Once at session start |
-| `deck-content.md` | Once at deck upload (after parsing + enrichment) |
-| `external-intel.md` | Once at deck upload; optionally refreshed if new topics emerge |
-| `board-dossier.md` | Once at deck upload |
-| `focus-brief.md` | Once at session start (generated from deck + config + external intel) |
-| `exchange-history.md` | After every exchange resolves |
-| `exchange-notes.md` | After every turn within an exchange |
-| `candidate-question.md` | Every 15s during presentation, on slide change, after exchanges |
-| `session-state.md` | Continuously (Moderator's live tracking) |
-| `phrases.md` | Pre-generated at session start; refreshed as agents are selected to speak |
+| # | Source | File | Mutability |
+|---|--------|------|-----------|
+| 1 | templates/{agent}/ | persona.md | IMMUTABLE |
+| 2 | templates/{agent}/ | domain-knowledge.md | IMMUTABLE |
+| 3 | sessions/{id}/shared/ | session-config.md | Write-once |
+| 4 | sessions/{id}/shared/ | deck-content.md | Write-once |
+| 5 | sessions/{id}/shared/ | external-intel.md | Write-few |
+| 6 | sessions/{id}/shared/ | presenter-transcript.md | Append-only |
+| 7 | sessions/{id}/shared/ | exchange-history.md | Append-only |
+| 8 | sessions/{id}/{agent}/ | focus-brief.md | Write-once |
+| 9 | sessions/{id}/{agent}/ | exchange-notes.md | Append-only |
+| 10 | sessions/{id}/{agent}/ | presenter-profile.md | Append-only |
+| 11 | sessions/{id}/{agent}/ | candidate-question.md | Overwrite |
+
+Immutable files are always the same. Mutable files grow richer as the session progresses — making every subsequent agent question smarter than the last.
