@@ -27,26 +27,34 @@ export class AudioCaptureService {
   }
 
   async start() {
+    this.socket?.emit('client_debug_log', { msg: 'AudioCaptureService: start() called' });
     try {
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 16000,
         },
       });
+      this.socket?.emit('client_debug_log', { msg: 'AudioCaptureService: getUserMedia success' });
     } catch (err) {
       console.warn('Microphone access denied:', err.message);
+      this.socket?.emit('client_debug_log', { msg: 'AudioCaptureService: Microphone access denied: ' + err.message });
       this.onError?.('Microphone access denied.');
       return;
     }
 
     try {
-      // Create AudioContext at 16kHz if supported, otherwise let worklet resample
-      this.audioContext = new AudioContext({ sampleRate: 16000 });
+      // Use native sample rate — the worklet will resample to 16kHz.
+      // Forcing 16kHz breaks audio capture on many systems (macOS, etc.)
+      this.audioContext = new AudioContext();
+      await this.audioContext.resume();
+      this.socket?.emit('client_debug_log', {
+        msg: `AudioCaptureService: AudioContext created, sampleRate=${this.audioContext.sampleRate}, state=${this.audioContext.state}`,
+      });
 
       // Load AudioWorklet processor
       await this.audioContext.audioWorklet.addModule('/audio-worklet-processor.js');
+      this.socket?.emit('client_debug_log', { msg: 'AudioCaptureService: AudioWorklet module loaded' });
 
       this.sourceNode = this.audioContext.createMediaStreamSource(this.mediaStream);
       this.workletNode = new AudioWorkletNode(this.audioContext, 'pcm-processor');
@@ -65,11 +73,13 @@ export class AudioCaptureService {
       this.workletNode.connect(this.audioContext.destination);
 
       this.isRunning = true;
+      this.socket?.emit('client_debug_log', { msg: 'AudioCaptureService: Pipeline connected and running' });
 
       // Listen for server transcription results
       this._setupTranscriptListener();
     } catch (err) {
       console.warn('Failed to start audio capture:', err.message);
+      this.socket?.emit('client_debug_log', { msg: 'AudioCaptureService: Failed to start: ' + err.message });
       this.onError?.('Failed to start audio capture: ' + err.message);
       this.stop();
     }

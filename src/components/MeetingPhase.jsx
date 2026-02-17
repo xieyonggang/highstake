@@ -23,7 +23,6 @@ export default function MeetingPhase() {
   } = useMeetingStore();
 
   const [started, setStarted] = useState(false);
-  const [showStartModal, setShowStartModal] = useState(false);
   const [videoStream, setVideoStream] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const [sidebarTab, setSidebarTab] = useState('participants');
@@ -77,35 +76,39 @@ export default function MeetingPhase() {
 
   const startSession = async () => {
     setStarted(true);
-    setShowStartModal(true);
     setIsRecording(true);
 
     // Start timer
     timerRef.current = setInterval(() => incrementTime(), 1000);
 
-    // Initialize TTS playback
-    ttsRef.current = new TTSPlaybackService();
+    // Connect Socket.IO
+    const socket = connectSocket(sessionId);
+    socketRef.current = socket;
+    socket.emit('client_debug_log', { msg: 'MeetingPhase: startSession initiated' });
 
+    // Initialize TTS playback
+    ttsRef.current = new TTSPlaybackService(socket); // Pass socket for logging if needed, or just use socketRef global
+    
     // Start webcam
     try {
       videoRef.current = new VideoCaptureService();
       const stream = await videoRef.current.startCamera();
       setVideoStream(stream);
       videoRef.current.startRecording();
+      socket.emit('client_debug_log', { msg: 'MeetingPhase: Webcam started' });
     } catch (err) {
       console.warn('Webcam not available:', err.message);
+      socket.emit('client_debug_log', { msg: 'MeetingPhase: Webcam error: ' + err.message });
     }
-
-    // Connect Socket.IO
-    const socket = connectSocket(sessionId);
-    socketRef.current = socket;
 
     // Start audio capture
     try {
       audioRef.current = new AudioCaptureService(socket);
       await audioRef.current.start();
+      socket.emit('client_debug_log', { msg: 'MeetingPhase: Audio capture started' });
     } catch (err) {
       console.warn('Microphone not available:', err.message);
+      socket.emit('client_debug_log', { msg: 'MeetingPhase: Microphone error: ' + err.message });
     }
 
     // Socket event listeners
@@ -114,13 +117,13 @@ export default function MeetingPhase() {
     });
 
     socket.on('agent_question', (data) => {
+      // ... same logic ...
       const agent = findAgent(data.agentId);
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
       removeHandRaised(data.agentId);
       showCaption(`${agent.name}: ${data.text}`, 10000);
 
-      // Play TTS if available
       if (data.audioUrl && ttsRef.current) {
         ttsRef.current.enqueue(
           data.agentId,
@@ -135,19 +138,26 @@ export default function MeetingPhase() {
     });
 
     socket.on('moderator_message', (data) => {
+      socket.emit('client_debug_log', { msg: 'MeetingPhase: received moderator_message' });
       const agent = findAgent('moderator');
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
       showCaption(`Diana Chen: ${data.text}`, 10000);
 
       if (data.audioUrl && ttsRef.current) {
+        socket.emit('client_debug_log', { msg: 'MeetingPhase: Enqueueing moderator audio' });
         ttsRef.current.enqueue(
           'moderator',
           data.audioUrl,
           (id) => setActiveSpeaker(id),
-          () => { clearActiveSpeaker(); setCaptionText(''); setShowStartModal(false); },
+          () => { 
+            socket.emit('client_debug_log', { msg: 'MeetingPhase: Moderator audio finished (onEnd)' });
+            clearActiveSpeaker(); 
+            setCaptionText(''); 
+          },
         );
       } else {
+        socket.emit('client_debug_log', { msg: 'MeetingPhase: No moderator audio URL, using fallback' });
         setActiveSpeaker('moderator');
         setTimeout(() => {
           clearActiveSpeaker();
@@ -172,6 +182,7 @@ export default function MeetingPhase() {
 
     // Tell backend to initialize agent engine and send moderator greeting with TTS
     socket.emit('start_session', {});
+    socket.emit('client_debug_log', { msg: 'MeetingPhase: Emitted start_session' });
 
     // Update session status on backend
     try {
@@ -335,21 +346,6 @@ export default function MeetingPhase() {
 
   return (
     <div className="h-screen bg-gray-950 flex flex-col overflow-hidden">
-      {/* Session Starting Modal */}
-      {showStartModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl px-10 py-8 text-center shadow-2xl max-w-sm">
-            <div className="w-16 h-16 mx-auto mb-5 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center animate-pulse">
-              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold text-white mb-2">Session Starting...</h3>
-            <p className="text-gray-400 text-sm">The moderator is introducing the session.</p>
-          </div>
-        </div>
-      )}
-
       {/* Top Bar */}
       <div className="bg-gray-900/80 backdrop-blur border-b border-gray-800 px-6 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-4">

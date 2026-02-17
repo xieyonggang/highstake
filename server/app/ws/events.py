@@ -24,8 +24,6 @@ async def handle_audio_chunk(session_id: str, sid: str, data: dict):
     if not audio_b64:
         return
     
-    # logger.debug(f"Session {session_id}: Received audio chunk, size {len(audio_b64)}")
-
     pcm_bytes = None
     try:
         pcm_bytes = base64.b64decode(audio_b64)

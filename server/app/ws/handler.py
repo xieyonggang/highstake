@@ -77,3 +77,10 @@ async def end_session(sid, data):
     session_id = active_sessions.get(sid)
     if session_id:
         await handle_end_session(session_id, sid)
+
+
+@sio.event
+async def client_debug_log(sid, data):
+    """Receive debug logs from client."""
+    session_id = active_sessions.get(sid, "unknown")
+    logger.info(f"CLIENT LOG [{session_id}]: {data.get('msg', '')}")
