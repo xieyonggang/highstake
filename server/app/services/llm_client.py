@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from google import genai
 from google.genai import types
@@ -17,23 +16,29 @@ class LLMClient:
         self,
         system_prompt: str,
         context_messages: list[dict],
-        max_tokens: int = 300,
     ) -> str:
         """Generate an agent question using Gemini.
         Uses gemini-2.5-flash for speed/cost balance during live sessions."""
-        # Build user content from context messages
         user_text = "\n".join(m.get("content", "") for m in context_messages)
 
-        response = self.client.models.generate_content(
+        response = await self.client.aio.models.generate_content(
             model="gemini-2.5-flash",
             contents=user_text,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                max_output_tokens=max_tokens,
                 temperature=0.8,
             ),
         )
-        return response.text
+
+        text = (response.text or "").strip()
+        finish = getattr(
+            response.candidates[0], "finish_reason", None
+        ) if response.candidates else None
+        logger.info(
+            f"LLM response: finish_reason={finish}, "
+            f"len={len(text)}, text='{text[:200]}'"
+        )
+        return text
 
     async def generate_debrief(
         self,
@@ -42,7 +47,7 @@ class LLMClient:
         max_tokens: int = 2000,
     ) -> str:
         """Generate post-session analysis using Gemini."""
-        response = self.client.models.generate_content(
+        response = await self.client.aio.models.generate_content(
             model="gemini-2.5-flash",
             contents=session_data,
             config=types.GenerateContentConfig(

@@ -63,9 +63,14 @@ class TTSService:
             from google import genai
             from google.genai import types
 
+            logger.info(
+                f"TTS synthesize for {agent_id}: "
+                f"text_len={len(text)}, text='{text[:200]}'"
+            )
+
             client = genai.Client(api_key=self.api_key)
 
-            response = client.models.generate_content(
+            response = await client.aio.models.generate_content(
                 model="gemini-2.5-flash-preview-tts",
                 contents=text,
                 config=types.GenerateContentConfig(
@@ -80,8 +85,19 @@ class TTSService:
                 ),
             )
 
-            # Extract audio data from the response
-            audio_data = response.candidates[0].content.parts[0].inline_data.data
+            # Extract audio data from all parts of the response
+            parts = response.candidates[0].content.parts
+            audio_data = b"".join(
+                part.inline_data.data
+                for part in parts
+                if getattr(part, "inline_data", None) and part.inline_data.data
+            )
+
+            logger.info(
+                f"TTS for {agent_id}: "
+                f"parts={len(parts)}, pcm_bytes={len(audio_data)}, "
+                f"duration_est={len(audio_data) / (24000 * 2):.1f}s"
+            )
 
             # Convert raw PCM to WAV
             wav_bytes = self._pcm_to_wav(audio_data)

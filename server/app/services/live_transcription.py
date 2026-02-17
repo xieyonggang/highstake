@@ -27,6 +27,7 @@ _NON_ENGLISH_RE = re.compile(
     r"\uAC00-\uD7AF"    # Korean
     r"\u0400-\u04FF"    # Cyrillic
     r"\u0900-\u097F"    # Devanagari
+    r"\u0980-\u09FF"    # Bengali
     r"]"
 )
 
@@ -130,6 +131,7 @@ class LiveTranscriptionService:
 
     async def start(self):
         """Open a Live API session and start the receive loop."""
+        self._running = True
         await self._connect()
         logger.info(
             f"Live transcription started for session {self.session_id}"
@@ -138,6 +140,9 @@ class LiveTranscriptionService:
     async def _connect(self):
         """Establish a new Gemini Live session and start receiving."""
         async with self._connect_lock:
+            if not self._running:
+                return
+
             # Clean up any existing session
             await self._close_session()
 
@@ -146,7 +151,6 @@ class LiveTranscriptionService:
                 config=_build_live_config(),
             )
             self._session = await self._session_ctx.__aenter__()
-            self._running = True
             self._needs_reconnect = False
             self._receive_task = asyncio.create_task(self._receive_loop())
 
@@ -160,15 +164,18 @@ class LiveTranscriptionService:
         self._reconnect_count += 1
         if self._reconnect_count > _MAX_RECONNECTS:
             logger.error(
-                f"Session {self.session_id}: max reconnects exceeded"
+                f"Session {self.session_id}: max reconnects exceeded, "
+                f"stopping transcription"
             )
             self._running = False
+            self._session = None
+            self._needs_reconnect = False
             return False
 
         try:
             await self._connect()
             # Small yield to let the session stabilize before sending audio
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)
             logger.info(
                 f"Session {self.session_id}: reconnected "
                 f"(attempt {self._reconnect_count})"
@@ -179,6 +186,8 @@ class LiveTranscriptionService:
                 f"Session {self.session_id}: reconnect failed: {e}"
             )
             self._session = None
+            self._needs_reconnect = True
+            self._last_error_time = time.monotonic()
             return False
 
     async def _close_session(self):
@@ -212,7 +221,7 @@ class LiveTranscriptionService:
                     # Speech starting — reconnect if needed
                     if self._needs_reconnect or self._session is None:
                         # Cooldown: don't retry reconnect within 1s of last error
-                        if time.monotonic() - self._last_error_time < 1.0:
+                        if time.monotonic() - self._last_error_time < 3.0:
                             return
                         if not await self._ensure_connected():
                             return
