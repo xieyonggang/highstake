@@ -31,6 +31,10 @@ class TTSService:
     def __init__(self):
         self.api_key = settings.gemini_api_key
         self.storage_dir = settings.storage_dir
+        self._client = None
+        if self.api_key:
+            from google import genai
+            self._client = genai.Client(api_key=self.api_key)
 
     async def synthesize(
         self,
@@ -60,15 +64,18 @@ class TTSService:
             return f"/api/files/{rel_path}"
 
         try:
-            from google import genai
             from google.genai import types
+
+            if not self._client:
+                logger.warning("TTS client not initialized.")
+                return None
 
             logger.info(
                 f"TTS synthesize for {agent_id}: "
                 f"text_len={len(text)}, text='{text[:200]}'"
             )
 
-            client = genai.Client(api_key=self.api_key)
+            client = self._client
 
             response = await client.aio.models.generate_content(
                 model="gemini-2.5-flash-preview-tts",

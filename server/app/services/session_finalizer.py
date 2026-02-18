@@ -46,6 +46,13 @@ async def finalize_session(session_id: str) -> None:
         agent_questions = [t for t in transcript if t["entry_type"] == "question"]
         presenter_segments = [t for t in transcript if t["speaker"] == "presenter"]
 
+        # Get exchange data if available
+        from app.ws.events import session_exchange_data
+
+        exchange_info = session_exchange_data.pop(session_id, {})
+        exchanges = exchange_info.get("exchanges", [])
+        unresolved = exchange_info.get("unresolved_challenges", [])
+
         # Calculate scores
         from app.services.scoring_engine import ScoringEngine
 
@@ -54,6 +61,7 @@ async def finalize_session(session_id: str) -> None:
             agent_questions=agent_questions,
             slide_count=session.deck.total_slides if session.deck else 6,
             duration_secs=session.duration_secs or 0,
+            exchanges=exchanges,
         )
         scores = scorer.calculate_all_scores()
 
@@ -101,9 +109,12 @@ async def finalize_session(session_id: str) -> None:
             data_support_score=scores["data_support"],
             handling_score=scores["handling"],
             structure_score=scores["structure"],
+            exchange_resilience_score=scores.get("exchange_resilience"),
             moderator_summary=moderator_summary,
             strengths=strengths,
             coaching_items=coaching_items,
+            unresolved_challenges=unresolved if unresolved else None,
+            exchange_data=exchange_info if exchange_info else None,
         )
         db.add(debrief)
 

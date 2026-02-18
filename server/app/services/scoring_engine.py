@@ -23,11 +23,13 @@ class ScoringEngine:
         agent_questions: list[dict],
         slide_count: int,
         duration_secs: int,
+        exchanges: list[dict] | None = None,
     ):
         self.transcript = transcript
         self.agent_questions = agent_questions
         self.slide_count = slide_count
         self.duration = duration_secs
+        self.exchanges = exchanges or []
         self.presenter_segments = [
             t for t in transcript if t.get("speaker") == "presenter"
         ]
@@ -39,14 +41,27 @@ class ScoringEngine:
         data_support = self._score_data_support()
         handling = self._score_handling()
         structure = self._score_structure()
+        exchange_resilience = self._score_exchange_resilience()
 
-        overall = int(
-            clarity * 0.20
-            + confidence * 0.20
-            + data_support * 0.20
-            + handling * 0.25
-            + structure * 0.15
-        )
+        if self.exchanges:
+            # With exchanges: adjusted weights per PRD
+            overall = int(
+                clarity * 0.15
+                + confidence * 0.15
+                + data_support * 0.20
+                + handling * 0.25
+                + structure * 0.10
+                + exchange_resilience * 0.15
+            )
+        else:
+            # Without exchanges: original weights
+            overall = int(
+                clarity * 0.20
+                + confidence * 0.20
+                + data_support * 0.20
+                + handling * 0.25
+                + structure * 0.15
+            )
 
         return {
             "overall": max(0, min(100, overall)),
@@ -55,6 +70,7 @@ class ScoringEngine:
             "data_support": max(0, min(100, data_support)),
             "handling": max(0, min(100, handling)),
             "structure": max(0, min(100, structure)),
+            "exchange_resilience": max(0, min(100, exchange_resilience)),
         }
 
     def _score_clarity(self) -> int:
@@ -199,3 +215,50 @@ class ScoringEngine:
         distribution_score = max(0, 100 - int(cv * 80))
 
         return distribution_score
+
+    def _score_exchange_resilience(self) -> int:
+        """Score based on multi-turn exchange performance."""
+        if not self.exchanges:
+            return 70  # Neutral when no exchange data
+
+        total = len(self.exchanges)
+        satisfied = sum(
+            1 for e in self.exchanges if e.get("outcome") == "satisfied"
+        )
+        intervened = sum(
+            1 for e in self.exchanges
+            if e.get("outcome") in ("moderator_intervened", "turn_limit", "timeout")
+        )
+
+        # Satisfaction ratio (0-50 points)
+        satisfaction_ratio = satisfied / max(total, 1)
+        satisfaction_score = int(satisfaction_ratio * 50)
+
+        # Multi-turn handling: bonus for resolving in fewer turns (0-30 points)
+        turn_scores = []
+        for e in self.exchanges:
+            turns = len(e.get("turns", []))
+            presenter_turns = sum(
+                1 for t in e.get("turns", []) if t.get("speaker") == "presenter"
+            )
+            if e.get("outcome") == "satisfied":
+                # Fewer turns to satisfaction = better
+                if presenter_turns <= 1:
+                    turn_scores.append(100)
+                elif presenter_turns == 2:
+                    turn_scores.append(75)
+                else:
+                    turn_scores.append(50)
+            else:
+                turn_scores.append(20)
+
+        avg_turn_score = (
+            sum(turn_scores) / len(turn_scores) if turn_scores else 50
+        )
+        turn_handling_score = int(avg_turn_score * 0.3)
+
+        # Moderator intervention penalty (0-20 points, starts at 20)
+        intervention_ratio = intervened / max(total, 1)
+        intervention_score = int((1 - intervention_ratio) * 20)
+
+        return satisfaction_score + turn_handling_score + intervention_score

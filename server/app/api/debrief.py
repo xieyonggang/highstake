@@ -6,7 +6,7 @@ from app.models.base import get_db
 from app.models.debrief import Debrief
 from app.models.session import Session
 from app.models.transcript import TranscriptEntry
-from app.schemas.debrief import CoachingItem, DebriefResponse, ScoreBreakdown
+from app.schemas.debrief import CoachingItem, DebriefResponse, ScoreBreakdown, UnresolvedChallenge
 from app.schemas.transcript import TranscriptEntryResponse
 
 router = APIRouter()
@@ -24,6 +24,12 @@ async def get_debrief(
     if not debrief:
         raise HTTPException(status_code=404, detail="Debrief not found. Session may still be processing.")
 
+    challenges = None
+    if debrief.unresolved_challenges:
+        challenges = [
+            UnresolvedChallenge(**c) for c in debrief.unresolved_challenges
+        ]
+
     return DebriefResponse(
         id=debrief.id,
         session_id=debrief.session_id,
@@ -34,10 +40,12 @@ async def get_debrief(
             data_support=debrief.data_support_score,
             handling=debrief.handling_score,
             structure=debrief.structure_score,
+            exchange_resilience=debrief.exchange_resilience_score,
         ),
         moderator_summary=debrief.moderator_summary,
         strengths=debrief.strengths,
         coaching_items=[CoachingItem(**item) for item in debrief.coaching_items],
+        unresolved_challenges=challenges,
     )
 
 

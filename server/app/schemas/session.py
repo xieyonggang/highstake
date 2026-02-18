@@ -14,6 +14,10 @@ class SessionCreate(BaseModel):
 
 class SessionUpdate(BaseModel):
     status: Optional[str] = None
+    interaction_mode: Optional[str] = None
+    intensity: Optional[str] = None
+    agents: Optional[list[str]] = None
+    deck_id: Optional[str] = None
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     duration_secs: Optional[int] = None

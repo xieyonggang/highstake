@@ -58,6 +58,14 @@ async def update_session(
             session.status = SessionStatus(payload.status).value
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {payload.status}")
+    if payload.interaction_mode is not None:
+        session.interaction_mode = payload.interaction_mode
+    if payload.intensity is not None:
+        session.intensity = payload.intensity
+    if payload.agents is not None:
+        session.agents = payload.agents
+    if payload.deck_id is not None:
+        session.deck_id = payload.deck_id
     if payload.started_at is not None:
         session.started_at = payload.started_at
     if payload.ended_at is not None:

@@ -50,10 +50,13 @@ export async function uploadRecording(sessionId, blob) {
 }
 
 // Decks
-export async function uploadDeck(file) {
+export async function uploadDeck(file, sessionId) {
   const formData = new FormData();
   formData.append('file', file);
-  const res = await fetch(`${BASE}/decks/upload`, {
+  const url = sessionId
+    ? `${BASE}/decks/upload?session_id=${sessionId}`
+    : `${BASE}/decks/upload`;
+  const res = await fetch(url, {
     method: 'POST',
     body: formData,
   });

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { AGENTS, INTERACTION_MODES, INTENSITY_LEVELS } from '../utils/constants';
 import { useSessionStore } from '../stores/sessionStore';
 import { uploadDeck, createSession } from '../services/api';
@@ -7,7 +7,7 @@ const CORE_AGENTS = AGENTS.filter((a) => !a.optional);
 const OPTIONAL_AGENTS = AGENTS.filter((a) => a.optional);
 
 export default function SetupPhase() {
-  const { config, setConfig, setDeckManifest, setSessionId, setPhase } = useSessionStore();
+  const { config, setConfig, setDeckManifest, sessionId, setSessionId, setPhase } = useSessionStore();
   const [uploadedFile, setUploadedFile] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -16,6 +16,21 @@ export default function SetupPhase() {
   const [isStarting, setIsStarting] = useState(false);
   const [showInvitePopup, setShowInvitePopup] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Create session immediately on mount so deck uploads go into session folder
+  useEffect(() => {
+    if (!sessionId) {
+      createSession({
+        interaction: config.interaction,
+        intensity: config.intensity,
+        agents: config.agents,
+      }).then((session) => {
+        setSessionId(session.id);
+      }).catch((err) => {
+        console.error('Failed to create session on mount:', err);
+      });
+    }
+  }, []);
 
   const selectedAgents = AGENTS.filter(
     (a) => a.id === 'moderator' || config.agents.includes(a.id)
@@ -37,7 +52,7 @@ export default function SetupPhase() {
     setIsUploading(true);
 
     try {
-      const manifest = await uploadDeck(file);
+      const manifest = await uploadDeck(file, sessionId);
       setDeckManifest(manifest);
       setDeckId(manifest.id);
       setIsUploading(false);
@@ -58,16 +73,18 @@ export default function SetupPhase() {
   const handleStart = async () => {
     setIsStarting(true);
     try {
-      const session = await createSession({
-        interaction: config.interaction,
+      // Session was created on mount — update it with final config before starting
+      const { updateSession } = await import('../services/api');
+      await updateSession(sessionId, {
+        interaction_mode: config.interaction,
         intensity: config.intensity,
         agents: config.agents,
-        deckId: deckId,
+        deck_id: deckId || null,
+        status: 'active',
       });
-      setSessionId(session.id);
       setPhase('meeting');
     } catch (err) {
-      setUploadError(err.message || 'Failed to create session.');
+      setUploadError(err.message || 'Failed to start session.');
       setIsStarting(false);
     }
   };

@@ -53,7 +53,7 @@ The goal is to make every executive feel like they've already survived the harde
 
 **Primary:** C-suite executives, VPs, and senior directors preparing for board presentations, investor meetings, strategic reviews, or internal leadership pitches.
 
-**Secondary:** Startup founders preparing for fundraising pitches, sales leaders rehearsing enterprise deal presentations, consultants preparing client deliverables, and MBA students practicing case presentations.
+**Secondary:** Startup founders preparing for fundraising pitches, corporate executive leaders rehearsing enterprise deal presentations, consultants preparing client deliverables, and MBA students practicing case presentations.
 
 ### 1.4 Key Value Propositions
 
@@ -276,7 +276,7 @@ Acceptance Criteria:
 | Text-to-Speech | Gemini Live API | Native voice generation with streaming, distinct voice configs |
 | Deck Parsing | python-pptx + PyMuPDF | Robust PPTX and PDF text extraction |
 | External Intelligence | Google Search API / Tavily / Perplexity API | Real-time news and market data enrichment |
-| Database | PostgreSQL | Relational data for users, sessions, scores |
+| Database | sqlite | Relational data for users, sessions, scores |
 | Object Storage | AWS S3 or Cloudflare R2 | Recordings, uploaded decks, exported reports |
 | Auth | Clerk or Auth0 | Quick integration, SSO support for enterprise |
 | Hosting | Vercel (frontend) + Railway/Fly.io (backend) | Simple deployment, good WebSocket support |
@@ -495,7 +495,7 @@ Every AI panelist in HighStake has two layers of information:
 
 This mirrors how real board members work: their expertise and personality don't change between meetings, but what they know about THIS specific presentation does.
 
-### 12.2 Directory Architecture
+### 5.2 Directory Architecture
 
 ```
 agents/
@@ -553,7 +553,7 @@ agents/
             └── presenter-profile.md
 ```
 
-### 12.3 Session Lifecycle
+### 5.3 Session Lifecycle
 
 ```
 SESSION CREATION                              SESSION ACTIVE                        SESSION END
@@ -590,7 +590,7 @@ SESSION CREATION                              SESSION ACTIVE                    
                                                  → feeds to LLM for each agent call
 ```
 
-### 12.4 Context Assembly at Runtime
+### 5.4 Context Assembly at Runtime
 
 When the Orchestrator needs to generate a question or follow-up for an agent, it reads files from BOTH the immutable templates and the mutable session folder:
 
@@ -625,7 +625,7 @@ CONTEXT PAYLOAD FOR AGENT CALL:
 
 For the Moderator, the assembly replaces domain-knowledge with orchestration.md, and adds session-state.md, generated-phrases.md, and debrief-notes.md.
 
-### 12.5 File Classification: Immutable vs. Mutable
+### 5.5 File Classification: Immutable vs. Mutable
 
 | File | Location | Mutability | Created When | Updated When |
 |------|----------|-----------|-------------|-------------|
@@ -647,7 +647,7 @@ For the Moderator, the assembly replaces domain-knowledge with orchestration.md,
 | candidate-question.md | sessions/{id}/{agent}/ | MUTABLE (overwrite) | First pre-generation cycle | Every 15s, on slide change, after exchanges |
 | presenter-profile.md | sessions/{id}/{agent}/ | MUTABLE (append-only) | After first exchange | After each exchange (behavioral observations) |
 
-### 12.6 Presenter Profile (New — Per-Agent Learning Within Session)
+### 5.6 Presenter Profile (New — Per-Agent Learning Within Session)
 
 Each agent builds a `presenter-profile.md` during the session that captures how THIS presenter handles their type of challenge. This makes follow-up questions progressively smarter:
 
@@ -679,7 +679,7 @@ Each agent builds a `presenter-profile.md` during the session that captures how 
 
 This profile is READ by the agent during context assembly but WRITTEN by the Orchestrator based on transcript analysis. It makes each subsequent exchange smarter — the agent learns the presenter's tells within the session.
 
-### 12.7 Session Archival & Reuse
+### 5.7 Session Archival & Reuse
 
 When a session ends:
 
@@ -699,7 +699,7 @@ When a session ends:
 - Session archives are queryable: scores, exchange counts, unresolved challenges
 - Presenter-profile evolution across sessions can be tracked (Phase 4)
 
-### 12.8 Storage & Cleanup
+### 5.8 Storage & Cleanup
 
 | Content | Storage | Retention |
 |---------|---------|-----------|
@@ -717,7 +717,7 @@ Estimated storage per session:
 
 ## 6. Context Stack Architecture
 
-### 12.1 Overview
+### 6.1 Overview
 
 The quality of agent questions is directly proportional to the richness and relevance of the context. HighStake uses a **5-layer context stack** — each layer adds a dimension of intelligence that makes agent questions feel genuinely informed rather than generically challenging.
 
@@ -747,7 +747,7 @@ The context stack is assembled at runtime by reading files from both `agents/tem
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 12.2 Layer 1: Deck Content (Static, Pre-Loaded)
+### 6.2 Layer 1: Deck Content (Static, Pre-Loaded)
 
 This is the foundation. Before the session starts, the deck is parsed into a structured representation. The agent knows not just what's on the current slide but what's coming later — just like a real board member who flipped through the printed deck before the meeting.
 
@@ -787,7 +787,7 @@ Slide Manifest Schema:
 }
 ```
 
-### 12.3 Layer 2: Presenter's Live Transcript
+### 6.3 Layer 2: Presenter's Live Transcript
 
 This is the real-time layer — what the presenter has actually said, which is often different from what's on the slides. A good board member listens for the gaps between what's written and what's spoken.
 
@@ -814,7 +814,7 @@ Transcript Segment Schema:
 }
 ```
 
-### 12.4 Layer 3: Session Memory (Panel Dialogue History)
+### 6.4 Layer 3: Session Memory (Panel Dialogue History)
 
 Without this layer, agents operate in isolation and ask redundant questions. With it, they build on each other like a real panel.
 
@@ -863,7 +863,7 @@ Session Memory Schema:
 }
 ```
 
-### 12.5 Layer 4: Domain Knowledge (LLM Training Knowledge)
+### 6.5 Layer 4: Domain Knowledge (LLM Training Knowledge)
 
 The LLM brings deep expertise that makes agents feel like real domain experts rather than generic question machines.
 
@@ -875,7 +875,7 @@ The Contrarian (Board Advisor persona) draws on: historical precedents of failed
 
 This layer is activated by explicit system prompt instructions: "Draw on your knowledge of industry benchmarks, historical precedents, and established frameworks to evaluate the presenter's claims. If their projections deviate from industry norms, call it out with specifics."
 
-### 12.6 Layer 5: External Intelligence (Real-Time Enrichment)
+### 6.6 Layer 5: External Intelligence (Real-Time Enrichment)
 
 This layer makes agents terrifyingly well-prepared — the kind of board member who reads the morning news before your meeting.
 
@@ -920,7 +920,7 @@ Deck parsed → Extract entities and claims
 
 **Refresh Strategy:** The bulk of external intelligence is gathered once during deck parsing (pre-session). The system does NOT re-search during the live session to avoid latency impact. However, if the presenter mentions a company, person, or event not covered in the initial briefing, the Orchestrator can queue a lightweight background search for the next pre-generation cycle.
 
-### 12.7 Complete Context Assembly
+### 6.7 Complete Context Assembly
 
 Here's the full context payload assembled for each agent call:
 
@@ -969,7 +969,7 @@ INSTRUCTION:
   Stay in character.
 ```
 
-### 12.8 Context Window Management
+### 6.8 Context Window Management
 
 For sessions longer than 20 minutes, the full context will be large. The system implements a tiered compression strategy:
 
@@ -985,7 +985,7 @@ For sessions longer than 20 minutes, the full context will be large. The system 
 
 Target context payload: 8,000-15,000 tokens per agent call. This fits comfortably within Gemini 2.0 Flash's context window while keeping response latency low.
 
-### 12.9 The Board Preparation Dossier (Pre-Session Feature)
+### 6.9 The Board Preparation Dossier (Pre-Session Feature)
 
 The context enrichment process produces a valuable artifact: the **Board Preparation Dossier**. This can be shown to the presenter before the session as a "here's what your panel will come armed with" preview.
 
@@ -997,7 +997,7 @@ This gives the presenter a chance to prepare their defenses before the simulatio
 
 ## 7. Multi-Turn Exchange System
 
-### 12.1 The Problem with One-Shot Q&A
+### 7.1 The Problem with One-Shot Q&A
 
 A naive implementation treats agent interaction as: agent asks question → presenter answers → next slide. This feels robotic and misses the most valuable part of a boardroom: the follow-up.
 
@@ -1010,7 +1010,7 @@ In a real boardroom, a challenge often becomes a 2-4 turn exchange:
 
 This dynamic is where presenters learn the most — and where HighStake must excel.
 
-### 12.2 Session State Machine
+### 7.2 Session State Machine
 
 The session operates in five states. The EXCHANGE state is the core innovation.
 
@@ -1040,7 +1040,7 @@ The session operates in five states. The EXCHANGE state is the core innovation.
 
 **RESOLVING** — Moderator wraps up the exchange, optionally allows one pile-on from another agent, logs the exchange outcome and any unresolved challenges, and speaks a natural bridge-back phrase to return to the presentation.
 
-### 12.3 Exchange Turn Logic
+### 7.3 Exchange Turn Logic
 
 When the presenter answers an agent's question, the active agent receives an evaluation prompt:
 
@@ -1085,7 +1085,7 @@ Respond as JSON:
 }
 ```
 
-### 12.4 Exchange Turn Limits
+### 7.4 Exchange Turn Limits
 
 The Moderator enforces maximum turns to prevent runaway exchanges:
 
@@ -1099,7 +1099,7 @@ A "turn" = one agent statement + one presenter response.
 
 If the agent returns SATISFIED before hitting the limit, the exchange ends early and moves to RESOLVING.
 
-### 12.5 Cross-Agent Pile-Ons
+### 7.5 Cross-Agent Pile-Ons
 
 After the primary exchange resolves, another agent may want to add a related point. This creates powerful moments: "Building on what Marcus just raised about margins — if your downside scenario shows 28%, your break-even timeline on slide 11 needs to be revised too."
 
@@ -1126,7 +1126,7 @@ RESOLVING STATE:
       Diana: "Let's continue." → PRESENTING
 ```
 
-### 12.6 Moderator Bridge-Back Patterns
+### 7.6 Moderator Bridge-Back Patterns
 
 The Moderator's bridge-back from an exchange to the presentation must feel natural, not abrupt. The bridge should accomplish three things: acknowledge the exchange, signal to the presenter they can continue, and set up context for the next section.
 
@@ -1145,7 +1145,7 @@ The Moderator's bridge-back from an exchange to the presentation must feel natur
 **When presenter went off-script during the exchange:**
 "You brought up some new data points in that exchange that weren't in the deck. That's useful context. Let's get back to the slides — I believe you were on the competitive landscape."
 
-### 12.7 Exchange Integration with Latency Architecture
+### 7.7 Exchange Integration with Latency Architecture
 
 Multi-turn exchanges create a latency challenge: follow-up questions can't be pre-generated because they depend on what the presenter just said. Here's how the system adapts:
 
@@ -1193,7 +1193,7 @@ PRESENTING STATE (resumed):
 
 The slightly higher latency on follow-up turns (500-800ms) actually feels MORE natural than the initial question, because in a real boardroom, a person pauses to process the answer before responding.
 
-### 12.8 Exchange Example with Full Timing
+### 7.8 Exchange Example with Full Timing
 
 ```
 [00:00] PRESENTING STATE
@@ -1265,11 +1265,11 @@ Total exchange: 25 seconds. Natural, productive, with zero awkward silences. The
 
 ## 8. Feature Specifications
 
-### 12.1 Phase 1: Pre-Session Setup
+### 8.1 Phase 1: Pre-Session Setup
 
 The Moderator agent (Diana Chen) guides the presenter through configuration in a conversational, step-by-step flow.
 
-#### 12.1.1 Interaction Mode Selection
+#### 8.1.1 Interaction Mode Selection
 
 | Mode | Behavior | Agent Trigger | Moderator Role |
 |------|----------|---------------|----------------|
@@ -1279,7 +1279,7 @@ The Moderator agent (Diana Chen) guides the presenter through configuration in a
 
 All three modes support multi-turn exchanges — the interaction mode only controls when the initial question is triggered, not the depth of the resulting exchange.
 
-#### 12.1.2 Intensity Level Configuration
+#### 8.1.2 Intensity Level Configuration
 
 | Level | Initial Question Style | Exchange Depth | Follow-Up Aggression | Moderator Patience |
 |-------|----------------------|----------------|---------------------|-------------------|
@@ -1287,11 +1287,11 @@ All three modes support multi-turn exchanges — the interaction mode only contr
 | Moderate | Direct, demands justification | 3 turns max | Pushes on gaps, accepts good answers | Steps in if circular |
 | Adversarial | Aggressive, expresses doubt | 4 turns max | Escalates, points out contradictions | Only steps in at limit |
 
-#### 12.1.3 Focus Area Selection
+#### 8.1.3 Focus Area Selection
 
 The presenter selects one or more focus areas. These areas are injected into each agent's system prompt and influence the external intelligence enrichment. Available focus areas: Financial Projections, Go-to-Market Strategy, Competitive Analysis, Technical Feasibility, Team & Execution, Market Sizing, Risk Assessment, Timeline & Milestones. Custom focus areas can be typed in by the presenter.
 
-#### 12.1.4 Deck Upload & Enrichment
+#### 8.1.4 Deck Upload & Enrichment
 
 Accepted formats: PPTX (preferred), PDF. Max file size: 50MB. Max slides: 100.
 
@@ -1308,13 +1308,13 @@ Processing pipeline:
 
 Full pipeline completes within 30 seconds for a 20-slide deck. Parsing and enrichment run in parallel.
 
-### 12.2 Phase 2: Live Boardroom Session
+### 8.2 Phase 2: Live Boardroom Session
 
-#### 12.2.1 Video Conference UI Layout
+#### 8.2.1 Video Conference UI Layout
 
 The interface mimics a familiar video conference layout. The presenter's webcam feed occupies one tile (highlighted with a blue ring). Four AI agent tiles display avatars, names, titles, and role badges. Active speaker detection highlights the current speaker's tile with a glow effect and audio waveform animation. A thinking indicator (pulsing dots) appears on agent tiles during follow-up processing. A slide viewer panel shows the current slide with navigation controls. A chat panel on the right displays all agent messages with timestamps. A top bar shows session timer, interaction mode indicator, exchange turn counter, recording status, and "End Session" button.
 
-#### 12.2.2 Presenter Capture Pipeline
+#### 8.2.2 Presenter Capture Pipeline
 
 ```
 Browser Mic → MediaRecorder API → Audio Chunks (WebM/Opus, 250ms intervals)
@@ -1331,13 +1331,13 @@ Browser Camera → MediaStream → Video Element (self-view)
 Audio: 16kHz minimum (48kHz preferred), WebM/Opus, echo cancellation + noise suppression enabled.
 Video: 720p minimum, 30fps, WebM/VP9.
 
-#### 12.2.3 Agent Audio Playback
+#### 8.2.3 Agent Audio Playback
 
 Agent audio arrives as streaming chunks from Gemini Live TTS. The client maintains a per-agent audio playback queue. When an agent speaks, their tile animates (waveform bars, glow effect). Other agent tiles dim slightly. The presenter's tile shows a "listening" state during agent speech. Audio chunks are buffered minimally (50-100ms) for smooth playback without gaps.
 
-### 12.3 Phase 3: Post-Session Debrief
+### 8.3 Phase 3: Post-Session Debrief
 
-#### 12.3.1 Scoring Model
+#### 8.3.1 Scoring Model
 
 | Dimension | Weight | Signals |
 |-----------|--------|---------|
@@ -1353,7 +1353,7 @@ Filler words tracked: "um", "uh", "like", "you know", "basically", "actually", "
 
 Hedging language tracked: "I think", "maybe", "probably", "I guess", "hopefully", "we'll see", "it depends".
 
-#### 12.3.2 Debrief Tabs
+#### 8.3.2 Debrief Tabs
 
 **Summary Tab:** Overall score with radial progress indicator, category score bars, top 4 strengths with specific examples, Moderator's narrative summary, and exchange highlight reel (the most intense exchange, summarized).
 
@@ -1365,11 +1365,11 @@ Hedging language tracked: "I think", "maybe", "probably", "I guess", "hopefully"
 
 **Unresolved Challenges Tab:** List of exchanges where the agent was NOT satisfied when the Moderator stepped in. Each entry shows the original claim, the challenge, the presenter's responses, why it remained unresolved, and a suggested preparation strategy for the real meeting.
 
-#### 12.3.3 Moderator's Summary Generation
+#### 8.3.3 Moderator's Summary Generation
 
 The Moderator's post-session summary is generated via a dedicated Gemini call with: full transcript, all exchange data with outcomes, scoring results, slide content, session configuration, external context briefing, and comparison to previous sessions if available. The summary is 200-300 words, written in first person as Diana Chen, covering overall impression, strongest moment, most critical unresolved challenge, exchange handling assessment, one specific tactical recommendation, and encouragement.
 
-#### 12.3.4 Report Export
+#### 8.3.4 Report Export
 
 PDF report includes: session metadata (date, duration, configuration), overall and dimension scores, strengths and improvement areas, exchange summaries with outcomes, unresolved challenges with preparation recommendations, full transcript, external context briefing used, and Moderator's summary. Generated server-side.
 
@@ -1780,7 +1780,7 @@ To ensure generated agents meet the quality bar of hand-crafted defaults:
 
 ## 9. AI Agent Specifications
 
-### 12.1 Agent Persona Definitions
+### 9.1 Agent Persona Definitions
 
 #### Diana Chen — The Moderator
 
@@ -1838,7 +1838,7 @@ To ensure generated agents meet the quality bar of hand-crafted defaults:
 | Intensity Scaling | Friendly: "Have you considered what happens if...?" Moderate: "There's a tension here between X and Y..." Adversarial: "This entire thesis collapses if..." |
 | Voice | Gravelly, deliberate pace, thoughtful pauses, occasionally provocative |
 
-### 12.2 Agent Coordination Rules
+### 9.2 Agent Coordination Rules
 
 - No two agents should ask about the same specific claim simultaneously
 - The Moderator tracks which topics have been covered and steers agents toward uncovered areas
@@ -1849,7 +1849,7 @@ To ensure generated agents meet the quality bar of hand-crafted defaults:
 - Total agent speaking time should not exceed 40% of the session; the presenter should speak at least 60%
 - During an exchange, only the active agent and the presenter speak — other agents and the Moderator observe silently (except for Moderator micro-phrases)
 
-### 12.3 Gemini Live Voice Configuration
+### 9.3 Gemini Live Voice Configuration
 
 Each agent requires a distinct voice profile in Gemini Live:
 
@@ -1866,7 +1866,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 
 ## 10. Data Models
 
-### 12.1 User
+### 10.1 User
 
 ```json
 {
@@ -1882,7 +1882,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.2 Session
+### 10.2 Session
 
 ```json
 {
@@ -1918,7 +1918,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.3 Exchange Record
+### 10.3 Exchange Record
 
 ```json
 {
@@ -1989,7 +1989,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.4 Transcript Entry
+### 10.4 Transcript Entry
 
 ```json
 {
@@ -2008,7 +2008,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 }
 ```
 
-### 12.5 Debrief Coaching Item
+### 10.5 Debrief Coaching Item
 
 ```json
 {
@@ -2025,7 +2025,7 @@ Note: Exact Gemini Live voice names may change — the key requirement is four d
 
 ## 11. API Contracts
 
-### 12.1 REST Endpoints
+### 11.1 REST Endpoints
 
 ```
 POST   /api/sessions                  Create a new session with configuration
@@ -2049,7 +2049,7 @@ GET    /api/users/me/sessions         List user's session history
 GET    /api/users/me/stats            Get aggregate stats (avg score, trends)
 ```
 
-### 12.2 WebSocket Events
+### 11.2 WebSocket Events
 
 ```
 Client → Server:
@@ -2201,12 +2201,9 @@ Server → Client:
   - User agent library (save, reuse, share, duplicate, delete)
   - Panel assembly UI: assign any mix of default + custom agents to panel seats
   - Support for 3-6 panelists per session (up from fixed 4)
-- Animated agent avatars with lip-sync (D-ID or HeyGen integration)
 - Session recording playback with timeline scrubbing and jump-to-exchange
 - Multi-session dashboard with improvement tracking, score trends, and exchange resilience trends
 - PDF report generation and export with exchange summaries
-- User accounts with authentication (Clerk/Auth0)
-- Team/organization accounts with shared agent libraries and session libraries
 - Presentation template library
 - Mobile-responsive debrief and dashboard
 
@@ -2217,6 +2214,8 @@ Server → Client:
 **Goal:** Enterprise readiness and market expansion.
 
 **Deliverables:**
+- User accounts with authentication (Clerk/Auth0)
+- Team/organization accounts with shared agent libraries and session libraries
 - SSO integration (SAML/OIDC)
 - Admin dashboard for team managers
 - API for LMS/training platform integration

@@ -10,6 +10,7 @@ class ScoreBreakdown(BaseModel):
     data_support: int
     handling: int
     structure: int
+    exchange_resilience: Optional[int] = None
 
 
 class CoachingItem(BaseModel):
@@ -19,6 +20,15 @@ class CoachingItem(BaseModel):
     timestamp_ref: Optional[float] = None
 
 
+class UnresolvedChallenge(BaseModel):
+    agent_id: str
+    question: str
+    target_claim: Optional[str] = None
+    slide_index: Optional[int] = None
+    outcome: str
+    turn_count: int
+
+
 class DebriefResponse(BaseModel):
     id: str
     session_id: str
@@ -26,5 +36,6 @@ class DebriefResponse(BaseModel):
     moderator_summary: str
     strengths: list[str]
     coaching_items: list[CoachingItem]
+    unresolved_challenges: Optional[list[UnresolvedChallenge]] = None
 
     model_config = {"from_attributes": True}

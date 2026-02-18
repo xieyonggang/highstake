@@ -101,7 +101,7 @@ class LiveTranscriptionService:
     we reconnect lazily when new speech is detected.
     """
 
-    MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+    MODEL = "gemini-2.5-flash-native-audio-latest"
 
     def __init__(
         self,
@@ -122,6 +122,7 @@ class LiveTranscriptionService:
         self._running = False
         self._reconnect_count = 0
         self._connect_lock = asyncio.Lock()
+        self._reconnect_lock = asyncio.Lock()
         self._needs_reconnect = False
 
         # VAD state
@@ -132,27 +133,53 @@ class LiveTranscriptionService:
     async def start(self):
         """Open a Live API session and start the receive loop."""
         self._running = True
+        logger.info(
+            f"Session {self.session_id}: starting live transcription, "
+            f"model={self.MODEL}"
+        )
         await self._connect()
         logger.info(
-            f"Live transcription started for session {self.session_id}"
+            f"Session {self.session_id}: live transcription started, "
+            f"session={self._session is not None}, "
+            f"receive_task={self._receive_task is not None}"
         )
 
     async def _connect(self):
         """Establish a new Gemini Live session and start receiving."""
         async with self._connect_lock:
             if not self._running:
+                logger.warning(
+                    f"Session {self.session_id}: _connect called but not running"
+                )
                 return
 
             # Clean up any existing session
             await self._close_session()
 
-            self._session_ctx = self.client.aio.live.connect(
-                model=self.MODEL,
-                config=_build_live_config(),
+            logger.info(
+                f"Session {self.session_id}: connecting to Gemini Live API "
+                f"(model={self.MODEL})..."
             )
-            self._session = await self._session_ctx.__aenter__()
-            self._needs_reconnect = False
-            self._receive_task = asyncio.create_task(self._receive_loop())
+            try:
+                self._session_ctx = self.client.aio.live.connect(
+                    model=self.MODEL,
+                    config=_build_live_config(),
+                )
+                self._session = await self._session_ctx.__aenter__()
+                self._needs_reconnect = False
+                self._receive_task = asyncio.create_task(self._receive_loop())
+                logger.info(
+                    f"Session {self.session_id}: Gemini Live session "
+                    f"connected successfully"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Session {self.session_id}: _connect failed: {e}"
+                )
+                self._session = None
+                self._session_ctx = None
+                self._needs_reconnect = True
+                raise
 
     async def _ensure_connected(self):
         """Reconnect if the session has closed. Returns True if connected."""
@@ -161,34 +188,41 @@ class LiveTranscriptionService:
         if not self._running:
             return False
 
-        self._reconnect_count += 1
-        if self._reconnect_count > _MAX_RECONNECTS:
-            logger.error(
-                f"Session {self.session_id}: max reconnects exceeded, "
-                f"stopping transcription"
-            )
-            self._running = False
-            self._session = None
-            self._needs_reconnect = False
-            return False
+        # Serialize reconnect attempts to prevent concurrent racing
+        async with self._reconnect_lock:
+            # Re-check after acquiring lock — another coroutine may have reconnected
+            if not self._needs_reconnect and self._session is not None:
+                return True
+            if not self._running:
+                return False
 
-        try:
-            await self._connect()
-            # Small yield to let the session stabilize before sending audio
-            await asyncio.sleep(0.2)
-            logger.info(
-                f"Session {self.session_id}: reconnected "
-                f"(attempt {self._reconnect_count})"
-            )
-            return True
-        except Exception as e:
-            logger.error(
-                f"Session {self.session_id}: reconnect failed: {e}"
-            )
-            self._session = None
-            self._needs_reconnect = True
-            self._last_error_time = time.monotonic()
-            return False
+            self._reconnect_count += 1
+            if self._reconnect_count > _MAX_RECONNECTS:
+                logger.error(
+                    f"Session {self.session_id}: max reconnects exceeded "
+                    f"({self._reconnect_count}), stopping transcription"
+                )
+                self._running = False
+                self._session = None
+                self._needs_reconnect = False
+                return False
+
+            try:
+                await self._connect()
+                await asyncio.sleep(0.2)
+                logger.info(
+                    f"Session {self.session_id}: reconnected "
+                    f"(attempt {self._reconnect_count})"
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    f"Session {self.session_id}: reconnect failed: {e}"
+                )
+                self._session = None
+                self._needs_reconnect = True
+                self._last_error_time = time.monotonic()
+                return False
 
     async def _close_session(self):
         """Close the current Gemini session without stopping the service."""
@@ -208,12 +242,38 @@ class LiveTranscriptionService:
             self._session = None
             self._session_ctx = None
 
+    _send_count: int = 0  # Tracks total chunks sent for logging
+
     async def send_audio(self, pcm_bytes: bytes):
         """Send a chunk of raw PCM audio with manual VAD signaling."""
         if not self._running:
+            if self._send_count == 0:
+                logger.warning(
+                    f"Session {self.session_id}: send_audio called but "
+                    f"service not running"
+                )
             return
 
+        self._send_count += 1
         rms = _pcm_rms(pcm_bytes)
+
+        # Log first chunk and periodic status
+        if self._send_count == 1:
+            logger.info(
+                f"Session {self.session_id}: first send_audio call, "
+                f"pcm_bytes={len(pcm_bytes)}, rms={rms:.0f}, "
+                f"session={self._session is not None}, "
+                f"needs_reconnect={self._needs_reconnect}, "
+                f"speaking={self._speaking}"
+            )
+        elif self._send_count % 500 == 0:
+            logger.info(
+                f"Session {self.session_id}: send_audio #{self._send_count}, "
+                f"rms={rms:.0f}, speaking={self._speaking}, "
+                f"session={self._session is not None}, "
+                f"needs_reconnect={self._needs_reconnect}, "
+                f"reconnect_count={self._reconnect_count}"
+            )
 
         try:
             if not self._speaking:
@@ -286,13 +346,27 @@ class LiveTranscriptionService:
     async def _receive_loop(self):
         """Listen for messages from the Live API session."""
         transcript_buffer = ""
+        msg_count = 0
+        logger.info(
+            f"Session {self.session_id}: receive_loop started, "
+            f"waiting for messages..."
+        )
         try:
             async for message in self._session.receive():
                 if not self._running:
                     break
 
+                msg_count += 1
                 server_content = getattr(message, "server_content", None)
                 if server_content is None:
+                    # Log non-server_content messages (setup, tool_call, etc.)
+                    if msg_count <= 5:
+                        msg_type = type(message).__name__
+                        attrs = [a for a in dir(message) if not a.startswith('_')]
+                        logger.debug(
+                            f"Session {self.session_id}: receive msg #{msg_count} "
+                            f"type={msg_type}, attrs={attrs[:10]}"
+                        )
                     continue
 
                 # Input transcription (user speech-to-text)
@@ -337,21 +411,33 @@ class LiveTranscriptionService:
                         await self.emit_callback(
                             "transcript_segment", final_segment
                         )
-                        await self.on_final_transcript(final_segment)
+                        try:
+                            await self.on_final_transcript(final_segment)
+                        except Exception as e:
+                            logger.error(
+                                f"Session {self.session_id}: "
+                                f"on_final_transcript error: {e}"
+                            )
                     transcript_buffer = ""
 
         except asyncio.CancelledError:
+            logger.info(
+                f"Session {self.session_id}: receive_loop cancelled "
+                f"after {msg_count} messages"
+            )
             return
         except Exception as e:
             logger.error(
-                f"Session {self.session_id}: receive loop error: {e}"
+                f"Session {self.session_id}: receive loop error after "
+                f"{msg_count} messages: {e}",
+                exc_info=True,
             )
 
         # Session closed naturally — mark for lazy reconnect
         if self._running:
             logger.info(
-                f"Session {self.session_id}: session closed, "
-                f"will reconnect on next speech"
+                f"Session {self.session_id}: session closed after "
+                f"{msg_count} messages, will reconnect on next speech"
             )
             self._needs_reconnect = True
             self._session = None

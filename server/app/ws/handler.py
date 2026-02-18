@@ -62,13 +62,25 @@ async def start_session(sid, data):
         await handle_start_session(session_id, sid)
 
 
+_audio_chunk_handler_count: dict[str, int] = {}
+
 @sio.event
 async def audio_chunk(sid, data):
     """Receive PCM audio chunk from browser AudioWorklet for Gemini Live STT."""
     from app.ws.events import handle_audio_chunk
     session_id = active_sessions.get(sid)
     if session_id:
+        _audio_chunk_handler_count.setdefault(sid, 0)
+        _audio_chunk_handler_count[sid] += 1
+        if _audio_chunk_handler_count[sid] == 1:
+            logger.info(
+                f"Handler: first audio_chunk from sid={sid}, "
+                f"session_id={session_id}, data_keys={list(data.keys())}, "
+                f"audio_len={len(data.get('audio', ''))}"
+            )
         await handle_audio_chunk(session_id, sid, data)
+    else:
+        logger.warning(f"Handler: audio_chunk from unknown sid={sid}")
 
 
 @sio.event

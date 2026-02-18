@@ -14,6 +14,7 @@ class Deck(Base, UUIDMixin, TimestampMixin):
     file_key: Mapped[str] = mapped_column(String(512), nullable=False)
     total_slides: Mapped[int] = mapped_column(Integer, nullable=False)
     manifest: Mapped[dict] = mapped_column(JSON, nullable=False)
+    claims_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # Relationships
     slides = relationship(

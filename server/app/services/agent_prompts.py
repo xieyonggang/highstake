@@ -1,4 +1,15 @@
-"""System prompt templates for each AI agent persona."""
+"""System prompt templates for each AI agent persona.
+
+Supports two modes:
+1. Template-based prompts (from agents/templates/*.md) — preferred, richer context
+2. Hardcoded fallback prompts — used when templates are not available
+"""
+
+import logging
+
+from app.services.template_loader import get_agent_templates
+
+logger = logging.getLogger(__name__)
 
 INTENSITY_INSTRUCTIONS = {
     "friendly": (
@@ -17,6 +28,32 @@ INTENSITY_INSTRUCTIONS = {
         "or 'This analysis is insufficient. Where's the...'"
     ),
 }
+
+EVALUATION_SYSTEM_PROMPT = """You are evaluating a presenter's response to a boardroom question.
+
+The agent who asked the question is: {agent_name} ({agent_role}).
+
+{satisfaction_criteria}
+
+## Current Exchange
+Question asked: {question_text}
+{exchange_history}
+
+## Instructions
+Evaluate whether the presenter's most recent response satisfactorily addresses the question.
+Consider the agent's satisfaction criteria above.
+
+Respond with a JSON object:
+{{
+  "verdict": "SATISFIED" | "FOLLOW_UP" | "ESCALATE",
+  "reasoning": "Brief explanation of your evaluation",
+  "follow_up": "If verdict is FOLLOW_UP or ESCALATE, provide exactly ONE focused follow-up question. Do not combine multiple questions. Otherwise null."
+}}
+
+- SATISFIED: The presenter gave a specific, evidence-backed answer.
+- FOLLOW_UP: The answer was partial or vague; the agent wants to probe deeper.
+- ESCALATE: The answer was evasive, repeated claims without evidence, or deflected.
+"""
 
 
 MODERATOR_SYSTEM_PROMPT = """You are Diana Chen, Chief of Staff, moderating a boardroom presentation.
@@ -356,15 +393,55 @@ def build_agent_prompt(
     previous_questions: list[str],
     elapsed_time: float = 0,
     context_block: str = "",
+    exchange_history: str = "",
+    presenter_profile: str = "",
+    target_claim: str = "",
 ) -> str:
-    """Build the complete system prompt for a specific agent."""
-    template = AGENT_PROMPTS.get(agent_id)
-    if not template:
-        raise ValueError(f"Unknown agent: {agent_id}")
+    """Build the complete system prompt for a specific agent.
 
+    Layers (in order):
+    1. Persona template (immutable character from .md)
+    2. Domain knowledge template (immutable expertise from .md)
+    3. Intensity instruction
+    4. Session context (slide, transcript, previous questions)
+    5. Exchange history (multi-turn context)
+    6. Presenter profile (adaptive strategy)
+    7. Target claim (if available)
+    Falls back to hardcoded prompts if templates are missing.
+    """
     intensity_instruction = INTENSITY_INSTRUCTIONS.get(intensity, INTENSITY_INSTRUCTIONS["moderate"])
     focus_str = ", ".join(focus_areas) if focus_areas else "No specific focus areas selected"
     prev_q_str = "\n".join(f"- {q}" for q in previous_questions) if previous_questions else "None yet"
+
+    # Try template-based prompt first
+    agent_templates = get_agent_templates(agent_id)
+    persona_md = agent_templates.get("persona", "")
+    domain_md = agent_templates.get("domain-knowledge", "")
+
+    if persona_md:
+        return _build_template_prompt(
+            agent_id=agent_id,
+            persona_md=persona_md,
+            domain_md=domain_md,
+            intensity_instruction=intensity_instruction,
+            focus_str=focus_str,
+            slide_index=slide_index,
+            total_slides=total_slides,
+            slide_title=slide_title,
+            slide_content=slide_content,
+            slide_notes=slide_notes,
+            transcript=transcript,
+            prev_q_str=prev_q_str,
+            elapsed_time=elapsed_time,
+            exchange_history=exchange_history,
+            presenter_profile=presenter_profile,
+            target_claim=target_claim,
+        )
+
+    # Fallback to hardcoded prompts
+    template = AGENT_PROMPTS.get(agent_id)
+    if not template:
+        raise ValueError(f"Unknown agent: {agent_id}")
 
     kwargs = {
         "intensity": intensity,
@@ -383,3 +460,119 @@ def build_agent_prompt(
     }
 
     return template.format(**kwargs)
+
+
+def _build_template_prompt(
+    agent_id: str,
+    persona_md: str,
+    domain_md: str,
+    intensity_instruction: str,
+    focus_str: str,
+    slide_index: int,
+    total_slides: int,
+    slide_title: str,
+    slide_content: str,
+    slide_notes: str,
+    transcript: str,
+    prev_q_str: str,
+    elapsed_time: float,
+    exchange_history: str,
+    presenter_profile: str,
+    target_claim: str,
+) -> str:
+    """Build a rich prompt from template files + session context."""
+    sections = []
+
+    # Layer 1: Persona (immutable character)
+    sections.append(persona_md)
+
+    # Layer 2: Domain knowledge (immutable expertise)
+    if domain_md:
+        sections.append(domain_md)
+
+    # Layer 3: Intensity
+    sections.append(f"## Current Intensity\n{intensity_instruction}")
+
+    # Layer 4: Session context
+    sections.append(f"""## Current Session Context
+Focus areas: {focus_str}
+Elapsed time: {elapsed_time:.0f} seconds
+
+### Current Slide ({slide_index + 1}/{total_slides})
+Title: {slide_title or 'Untitled'}
+Content: {slide_content or 'No content extracted'}
+Speaker notes: {slide_notes or 'No speaker notes'}
+
+### Presentation Transcript
+{transcript or 'Presentation has not started yet.'}
+
+### Questions Already Asked
+{prev_q_str}""")
+
+    # Layer 5: Exchange history (if in multi-turn)
+    if exchange_history:
+        sections.append(f"## Exchange History\n{exchange_history}")
+
+    # Layer 6: Presenter profile (adaptive)
+    if presenter_profile:
+        sections.append(f"## Presenter Profile (Observed)\n{presenter_profile}")
+
+    # Layer 7: Target claim
+    if target_claim:
+        sections.append(f"## Target Claim to Challenge\n{target_claim}")
+
+    # Instructions
+    sections.append("""## Instructions
+- Ask exactly ONE focused question. Do NOT ask multiple questions or combine questions in your response.
+- Reference specific claims or data from the presentation.
+- Be direct but professional. Do not repeat questions already asked.
+- Stay in character throughout.
+- Keep your question under 3 sentences.
+- Do NOT start with your name or title — just ask the question directly.""")
+
+    return "\n\n".join(sections)
+
+
+def build_evaluation_prompt(
+    agent_id: str,
+    question_text: str,
+    exchange_history: str,
+) -> str:
+    """Build an evaluation prompt for assessing a presenter's response."""
+    agent_templates = get_agent_templates(agent_id)
+    persona_md = agent_templates.get("persona", "")
+
+    # Extract satisfaction criteria from persona template
+    satisfaction_criteria = _extract_section(persona_md, "Satisfaction Criteria")
+    if not satisfaction_criteria:
+        satisfaction_criteria = (
+            "Will Accept: Specific data with sources, stress-test results, "
+            "honest risk acknowledgment with mitigation.\n"
+            "Will NOT Accept: Restated claims, vague references, deferrals."
+        )
+
+    return EVALUATION_SYSTEM_PROMPT.format(
+        agent_name=AGENT_NAMES.get(agent_id, agent_id),
+        agent_role=AGENT_ROLES.get(agent_id, ""),
+        satisfaction_criteria=satisfaction_criteria,
+        question_text=question_text,
+        exchange_history=exchange_history,
+    )
+
+
+def _extract_section(markdown: str, heading: str) -> str:
+    """Extract content under a ## heading from markdown text."""
+    if not markdown:
+        return ""
+    lines = markdown.split("\n")
+    capturing = False
+    result = []
+    for line in lines:
+        if line.strip().startswith("##") and heading.lower() in line.lower():
+            capturing = True
+            continue
+        elif capturing and line.strip().startswith("##"):
+            break
+        elif capturing:
+            result.append(line)
+    return "\n".join(result).strip()

@@ -16,10 +16,13 @@ export default function MeetingPhase() {
   const { sessionId, config, deckManifest, setPhase } = useSessionStore();
   const {
     currentSlide, messages, activeSpeaker, handsRaised,
-    elapsedTime, isRecording, isMuted, isCameraOn,
+    elapsedTime, isRecording, isMuted, isCameraOn, exchangeState,
+    exchangeTurnInfo, thinkingAgents,
     setCurrentSlide, addMessage, setActiveSpeaker, clearActiveSpeaker,
     addHandRaised, removeHandRaised, setElapsedTime, incrementTime,
-    setIsRecording, setIsMuted, setIsCameraOn, reset: resetMeeting,
+    setIsRecording, setIsMuted, setIsCameraOn, setExchangeState,
+    setExchangeTurnInfo, addThinkingAgent, removeThinkingAgent,
+    reset: resetMeeting,
   } = useMeetingStore();
 
   const [ending, setEnding] = useState(false);
@@ -35,6 +38,7 @@ export default function MeetingPhase() {
   const audioRef = useRef(null);
   const videoRef = useRef(null);
   const ttsRef = useRef(null);
+  const endingTimeoutRef = useRef(null);
 
   const slides = deckManifest?.slides || DEMO_SLIDES;
   const totalSlides = slides.length;
@@ -57,6 +61,7 @@ export default function MeetingPhase() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (captionTimerRef.current) clearTimeout(captionTimerRef.current);
+      if (endingTimeoutRef.current) clearTimeout(endingTimeoutRef.current);
       audioRef.current?.stop();
       videoRef.current?.stopCamera();
       ttsRef.current?.stop();
@@ -115,10 +120,18 @@ export default function MeetingPhase() {
     // Socket event listeners
     socket.on('transcript_segment', (segment) => {
       showCaption(segment.text || '', segment.is_final ? 5000 : 0);
+      if ((segment.is_final || segment.isFinal) && segment.text?.trim()) {
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        addMessage({
+          agent: { id: 'presenter', name: 'You', role: 'Presenter', avatar: '🎤', color: '#6366f1' },
+          text: segment.text.trim(),
+          time,
+        });
+      }
     });
 
     socket.on('agent_question', (data) => {
-      // ... same logic ...
+      removeThinkingAgent(data.agentId);
       const agent = findAgent(data.agentId);
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
@@ -170,8 +183,68 @@ export default function MeetingPhase() {
       addHandRaised(data.agentId);
     });
 
+    socket.on('agent_hand_lowered', (data) => {
+      removeHandRaised(data.agentId);
+    });
+
+    // Pre-fetch filler audio for instant playback during exchanges
+    socket.on('filler_urls', (data) => {
+      const fillers = data?.fillers || {};
+      Object.values(fillers).flat().forEach((url) => {
+        fetch(url).catch(() => {}); // warm browser cache
+      });
+    });
+
+    // Play agent filler audio (bridges silence while LLM evaluates)
+    socket.on('agent_filler', (data) => {
+      if (data.audioUrl && ttsRef.current) {
+        ttsRef.current.enqueue(
+          data.agentId,
+          data.audioUrl,
+          (id) => setActiveSpeaker(id),
+          () => clearActiveSpeaker(),
+        );
+      }
+    });
+
     socket.on('session_state', (data) => {
-      // Could update UI state (presenting, q_and_a, ending)
+      setExchangeState(data);
+      if (data.state === 'exchange' && data.maxTurns) {
+        setExchangeTurnInfo({ turnNumber: 1, maxTurns: data.maxTurns });
+      } else if (data.state === 'presenting') {
+        setExchangeTurnInfo(null);
+      }
+    });
+
+    socket.on('agent_follow_up', (data) => {
+      removeThinkingAgent(data.agentId);
+      if (data.turnNumber && data.maxTurns) {
+        setExchangeTurnInfo({ turnNumber: data.turnNumber, maxTurns: data.maxTurns });
+      }
+      const agent = findAgent(data.agentId);
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl, isFollowUp: true });
+      showCaption(`${agent.name}: ${data.text}`, 10000);
+
+      if (data.audioUrl && ttsRef.current) {
+        ttsRef.current.enqueue(
+          data.agentId,
+          data.audioUrl,
+          (id) => setActiveSpeaker(id),
+          () => { clearActiveSpeaker(); setCaptionText(''); },
+        );
+      } else {
+        setActiveSpeaker(data.agentId);
+        setTimeout(() => clearActiveSpeaker(), 3000);
+      }
+    });
+
+    socket.on('exchange_resolved', (data) => {
+      setExchangeState({ state: 'resolved', ...data });
+    });
+
+    socket.on('agent_thinking', (data) => {
+      addThinkingAgent(data.agentId);
     });
 
     // Note: STT runs in browser via Web Speech API — no server-side STT errors
@@ -210,7 +283,14 @@ export default function MeetingPhase() {
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
-    socketRef.current?.emit('presenter_response', { text: chatInput.trim() });
+    const text = chatInput.trim();
+    socketRef.current?.emit('presenter_response', { text });
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    addMessage({
+      agent: { id: 'presenter', name: 'You', role: 'Presenter', avatar: '🎤', color: '#6366f1' },
+      text,
+      time,
+    });
     setChatInput('');
   };
 
@@ -242,11 +322,19 @@ export default function MeetingPhase() {
     clearInterval(timerRef.current);
     setIsRecording(false);
     ttsRef.current?.stop();
+    audioRef.current?.stop();
 
-    // Notify server
+    // Notify server — wait for session_ended event to transition to review
     socketRef.current?.emit('end_session', {});
 
-    // Update session
+    // Safety timeout: transition to review after 60s even if server hasn't responded
+    endingTimeoutRef.current = setTimeout(() => {
+      console.warn('Debrief generation timed out, transitioning to review');
+      disconnectSocket();
+      setPhase('review');
+    }, 60000);
+
+    // Update session status
     try {
       await updateSession(sessionId, {
         status: 'ending',
@@ -257,29 +345,19 @@ export default function MeetingPhase() {
       console.warn('Failed to update session:', err.message);
     }
 
-    // Upload recording
+    // Upload recording in background (don't block transition)
     if (videoRef.current) {
-      try {
-        const blob = await videoRef.current.stopRecording();
-        if (blob && sessionId) {
-          await uploadRecording(sessionId, blob);
-        }
-      } catch (err) {
-        console.warn('Failed to upload recording:', err.message);
-      }
+      const vc = videoRef.current;
+      vc.stopRecording()
+        .then((blob) => blob && sessionId && uploadRecording(sessionId, blob))
+        .catch((err) => console.warn('Failed to upload recording:', err.message))
+        .finally(() => vc.stopCamera());
     }
-
-    // Cleanup
-    audioRef.current?.stop();
-    videoRef.current?.stopCamera();
-    disconnectSocket();
-
-    setPhase('review');
   };
 
   const handleSessionEnded = async (data) => {
-    // Server-initiated session end
-    setEnding(true);
+    // Server signals finalization complete — transition to review
+    if (endingTimeoutRef.current) clearTimeout(endingTimeoutRef.current);
     clearInterval(timerRef.current);
     setIsRecording(false);
     ttsRef.current?.stop();
@@ -444,6 +522,13 @@ export default function MeetingPhase() {
                   isActive={activeSpeaker === agent.id}
                   isSpeaking={activeSpeaker === agent.id}
                   hasHandRaised={handsRaised.includes(agent.id)}
+                  isInExchange={exchangeState?.state === 'exchange' && exchangeState?.agentId === agent.id}
+                  isThinking={thinkingAgents.includes(agent.id)}
+                  exchangeTurnInfo={
+                    exchangeState?.state === 'exchange' && exchangeState?.agentId === agent.id
+                      ? exchangeTurnInfo
+                      : null
+                  }
                   compact
                 />
               ))}

@@ -19,7 +19,7 @@ export default function ReviewPhase() {
 
     let cancelled = false;
 
-    async function fetchData() {
+    async function fetchData(retries = 0) {
       setLoading(true);
       setError(null);
 
@@ -33,11 +33,18 @@ export default function ReviewPhase() {
 
         setDebrief(debriefData);
         setTranscript(transcriptData);
+        setLoading(false);
       } catch (err) {
         if (cancelled) return;
-        setError(err.message || 'Failed to load debrief data.');
-      } finally {
-        if (!cancelled) setLoading(false);
+        // Retry up to 12 times (60s total) — debrief may still be generating
+        if (retries < 12) {
+          setTimeout(() => {
+            if (!cancelled) fetchData(retries + 1);
+          }, 5000);
+        } else {
+          setError(err.message || 'Failed to load debrief data.');
+          setLoading(false);
+        }
       }
     }
 
@@ -79,6 +86,7 @@ export default function ReviewPhase() {
   const strengths = debrief?.strengths || [];
   const coachingItems = debrief?.coaching_items || [];
   const moderatorSummary = debrief?.moderator_summary;
+  const unresolvedChallenges = debrief?.unresolved_challenges || [];
 
   const questionCount = messages.filter((m) => m.agent?.id !== 'moderator').length;
 
@@ -87,6 +95,7 @@ export default function ReviewPhase() {
     { id: 'transcript', label: 'Transcript' },
     { id: 'scores', label: 'Scores' },
     { id: 'advice', label: 'Coaching' },
+    ...(unresolvedChallenges.length > 0 ? [{ id: 'challenges', label: 'Challenges' }] : []),
   ];
 
   const scoreEntries = scores
@@ -96,6 +105,9 @@ export default function ReviewPhase() {
         ['data support', scores.data_support],
         ['handling', scores.handling],
         ['structure', scores.structure],
+        ...(scores.exchange_resilience != null
+          ? [['exchange resilience', scores.exchange_resilience]]
+          : []),
       ]
     : [];
 
@@ -353,6 +365,59 @@ export default function ReviewPhase() {
                 No coaching items available.
               </div>
             )}
+          </div>
+        )}
+
+        {/* Challenges Tab */}
+        {activeTab === 'challenges' && (
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+              <p className="text-amber-700 text-sm">
+                These questions were not satisfactorily resolved during the session. Prepare stronger answers for your actual presentation.
+              </p>
+            </div>
+            {unresolvedChallenges.map((challenge, i) => {
+              const agent = AGENTS.find((a) => a.id === challenge.agent_id) || AGENTS[0];
+              return (
+                <div
+                  key={i}
+                  className="bg-white border border-blue-200/60 rounded-2xl p-6 shadow-sm"
+                >
+                  <div className="flex items-center gap-3 mb-3">
+                    <div
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                      style={{ background: agent.color }}
+                    >
+                      {agent.avatar}
+                    </div>
+                    <div>
+                      <span className="text-sm font-semibold text-gray-800">{agent.name}</span>
+                      <span className="text-gray-400 text-xs ml-2">
+                        {challenge.slide_index != null ? `Slide ${challenge.slide_index + 1}` : ''}
+                      </span>
+                    </div>
+                    <span
+                      className={`ml-auto px-2 py-0.5 rounded-full text-xs font-bold ${
+                        challenge.outcome === 'turn_limit'
+                          ? 'bg-amber-100 text-amber-600'
+                          : 'bg-red-100 text-red-500'
+                      }`}
+                    >
+                      {challenge.outcome === 'turn_limit' ? 'Turn Limit' : 'Intervened'}
+                    </span>
+                  </div>
+                  <p className="text-gray-700 text-sm mb-2">{challenge.question}</p>
+                  {challenge.target_claim && (
+                    <div className="text-gray-400 text-xs mt-2">
+                      Targeted claim: <span className="text-gray-600 italic">{challenge.target_claim}</span>
+                    </div>
+                  )}
+                  <div className="text-gray-400 text-xs mt-1">
+                    {challenge.turn_count} turn{challenge.turn_count !== 1 ? 's' : ''} of discussion
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
 

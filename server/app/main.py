@@ -12,6 +12,11 @@ from app.api import sessions, decks, debrief
 from app.ws.handler import sio
 
 logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO)
+
+# Suppress noisy third-party loggers
+logging.getLogger("google_genai").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

@@ -56,8 +56,8 @@ export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev,
         </button>
         <div className="flex-1 min-w-0">
           {captionText ? (
-            <p className="text-gray-800 text-xs text-center leading-relaxed line-clamp-2" title={captionText}>
-              {captionText.split(/\s+/).slice(-40).join(' ')}
+            <p className="text-gray-800 text-xs text-center truncate" title={captionText}>
+              {captionText.split(/\s+/).slice(-20).join(' ')}
             </p>
           ) : (
             <p className="text-gray-400 text-xs text-center">

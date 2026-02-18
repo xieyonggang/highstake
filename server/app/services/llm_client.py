@@ -40,6 +40,39 @@ class LLMClient:
         )
         return text
 
+    async def evaluate_response(
+        self,
+        system_prompt: str,
+        exchange_text: str,
+    ) -> dict:
+        """Evaluate a presenter's response, returning JSON verdict.
+
+        Returns: {"verdict": "SATISFIED"|"FOLLOW_UP"|"ESCALATE",
+                  "reasoning": str, "follow_up": str|None}
+        """
+        import json
+
+        response = await self.client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=exchange_text,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+                temperature=0.4,
+            ),
+        )
+
+        text = (response.text or "").strip()
+        logger.info(f"Evaluation response: {text[:300]}")
+
+        try:
+            result = json.loads(text)
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse evaluation JSON: {text[:200]}")
+            result = {"verdict": "SATISFIED", "reasoning": "Parse error", "follow_up": None}
+
+        return result
+
     async def generate_debrief(
         self,
         system_prompt: str,

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, compact }) {
+export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, isInExchange, isThinking, exchangeTurnInfo, compact }) {
   if (compact) {
     return (
       <div
@@ -31,8 +31,32 @@ export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, 
           <div className="text-gray-800 font-semibold text-sm truncate">{agent.name}</div>
           <div className="text-gray-500 text-xs truncate">{agent.role}</div>
         </div>
+        {isThinking && !isSpeaking && (
+          <div className="flex gap-1 flex-shrink-0">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-1.5 h-1.5 rounded-full animate-bounce"
+                style={{
+                  background: agent.color,
+                  animationDelay: `${i * 0.2}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {isInExchange && !isSpeaking && !isThinking && (
+          <span
+            className="flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider animate-pulse"
+            style={{ background: `${agent.color}20`, color: agent.color }}
+          >
+            {exchangeTurnInfo
+              ? `${exchangeTurnInfo.turnNumber}/${exchangeTurnInfo.maxTurns}`
+              : 'Q&A'}
+          </span>
+        )}
         {hasHandRaised && (
-          <span className="text-lg animate-bounce flex-shrink-0">✋</span>
+          <span className="text-lg animate-bounce flex-shrink-0">&#9995;</span>
         )}
         {isSpeaking && (
           <div className="flex gap-0.5 flex-shrink-0">
@@ -89,8 +113,23 @@ export default function AgentTile({ agent, isActive, isSpeaking, hasHandRaised, 
         </div>
       </div>
 
+      {isThinking && !isSpeaking && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="w-2 h-2 rounded-full animate-bounce"
+              style={{
+                background: agent.color,
+                animationDelay: `${i * 0.2}s`,
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       {hasHandRaised && (
-        <div className="absolute top-3 right-3 text-2xl animate-bounce">✋</div>
+        <div className="absolute top-3 right-3 text-2xl animate-bounce">&#9995;</div>
       )}
 
       {isSpeaking && (

@@ -18,8 +18,13 @@ class DeckParserService:
         file_bytes: bytes,
         filename: str,
         db: AsyncSession,
+        session_id: str | None = None,
     ) -> dict:
-        """Full pipeline: parse file, generate thumbnails, store in DB."""
+        """Full pipeline: parse file, generate thumbnails, store in DB.
+
+        If session_id is provided, files are stored directly in the session
+        folder at sessions/{session_id}/{deck_id}/ instead of decks/{deck_id}/.
+        """
         filename_lower = filename.lower()
         is_pptx = filename_lower.endswith(".pptx")
         is_pdf = filename_lower.endswith(".pdf")
@@ -40,20 +45,34 @@ class DeckParserService:
             # Generate thumbnails
             thumbnails = self._generate_thumbnails(file_path, tmpdir_path, is_pptx)
 
-            # Upload original file to storage
+            # Storage prefix: session folder or standalone decks folder
             from app.services.storage_service import StorageService
 
             storage = StorageService()
             deck_id = str(uuid.uuid4())
-            file_key = f"decks/{deck_id}/{filename}"
+            if session_id:
+                prefix = f"sessions/{session_id}/{deck_id}"
+            else:
+                prefix = f"decks/{deck_id}"
+
+            file_key = f"{prefix}/{filename}"
             await storage.upload(file_key, file_bytes, self._content_type(filename))
 
             # Upload thumbnails
             for i, thumb_bytes in enumerate(thumbnails):
                 if thumb_bytes:
-                    thumb_key = f"decks/{deck_id}/thumbnails/{i}.png"
+                    thumb_key = f"{prefix}/thumbnails/{i}.png"
                     await storage.upload(thumb_key, thumb_bytes, "image/png")
                     slides_data[i]["thumbnail_key"] = thumb_key
+
+            # Save parsed slide content as readable markdown
+            slides_md = self._build_slides_markdown(filename, slides_data)
+            slides_md_key = f"{prefix}/slides.md"
+            await storage.upload(
+                slides_md_key,
+                slides_md.encode("utf-8"),
+                "text/markdown",
+            )
 
             # Create DB records
             deck = Deck(
@@ -269,6 +288,33 @@ class DeckParserService:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
+
+    def _build_slides_markdown(self, filename: str, slides_data: list[dict]) -> str:
+        """Build a human-readable markdown summary of all parsed slides."""
+        lines = [
+            f"# {filename}",
+            f"",
+            f"**Total slides:** {len(slides_data)}",
+            "",
+        ]
+        for s in slides_data:
+            idx = s.get("index", 0)
+            title = s.get("title", f"Slide {idx + 1}")
+            lines.append(f"---\n## Slide {idx + 1}: {title}\n")
+            if s.get("subtitle"):
+                lines.append(f"**Subtitle:** {s['subtitle']}\n")
+            if s.get("body_text"):
+                lines.append(f"{s['body_text']}\n")
+            if s.get("notes"):
+                lines.append(f"**Speaker notes:** {s['notes']}\n")
+            flags = []
+            if s.get("has_chart"):
+                flags.append("chart")
+            if s.get("has_table"):
+                flags.append("table")
+            if flags:
+                lines.append(f"_Contains: {', '.join(flags)}_\n")
+        return "\n".join(lines)
 
     def _content_type(self, filename: str) -> str:
         if filename.lower().endswith(".pptx"):

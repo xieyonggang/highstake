@@ -1,3 +1,6 @@
+import asyncio
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
@@ -7,12 +10,46 @@ from app.models.base import get_db
 from app.models.deck import Deck, Slide
 from app.schemas.deck import DeckManifest, SlideData
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+async def _extract_and_store_claims(deck_id: str, manifest_data: dict) -> None:
+    """Background task: extract claims from deck and persist to DB."""
+    from app.config import settings
+
+    if not settings.gemini_api_key:
+        return
+
+    try:
+        from app.services.llm_client import LLMClient
+        from app.services.claim_extractor import extract_claims_from_deck
+        from app.models.base import async_session_factory
+
+        llm = LLMClient(settings.gemini_api_key)
+        claims = await extract_claims_from_deck(llm, manifest_data)
+
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(Deck).where(Deck.id == deck_id)
+            )
+            deck = result.scalar_one_or_none()
+            if deck:
+                deck.claims_json = claims
+                await db.commit()
+                logger.info(
+                    f"Claims extracted and stored for deck {deck_id}: "
+                    f"{sum(len(v) for v in claims.values())} claims"
+                )
+    except Exception as e:
+        logger.error(f"Background claim extraction failed for deck {deck_id}: {e}")
 
 
 @router.post("/upload", response_model=DeckManifest, status_code=201)
 async def upload_deck(
     file: UploadFile = File(...),
+    session_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     if not file.filename:
@@ -32,7 +69,14 @@ async def upload_deck(
     from app.services.deck_parser import DeckParserService
 
     parser = DeckParserService()
-    manifest_data = await parser.parse_and_store(file_bytes, file.filename, db)
+    manifest_data = await parser.parse_and_store(
+        file_bytes, file.filename, db, session_id=session_id
+    )
+
+    # Kick off background claim extraction (non-blocking)
+    asyncio.create_task(
+        _extract_and_store_claims(manifest_data["id"], manifest_data)
+    )
 
     return manifest_data
 
