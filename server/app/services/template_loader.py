@@ -1,4 +1,4 @@
-"""Loads and caches agent template files from agents/templates/."""
+"""Loads and caches agent template files from app/agents/templates/."""
 
 import logging
 import os
@@ -9,12 +9,12 @@ logger = logging.getLogger(__name__)
 # Module-level cache: {agent_id: {filename_stem: content}}
 _template_cache: dict[str, dict[str, str]] = {}
 
-# Path to templates directory (repo root / agents / templates)
-_TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "agents" / "templates"
+# Path to templates directory (server/app/agents/templates)
+_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "agents" / "templates"
 
 
 def load_templates(templates_dir: Path | None = None) -> dict[str, dict[str, str]]:
-    """Read all .md files under agents/templates/<agent_id>/ and cache them.
+    """Read all .md files under app/agents/templates/<agent_id>/ and cache them.
 
     Returns dict like:
         {"skeptic": {"persona": "...", "domain-knowledge": "..."}, ...}

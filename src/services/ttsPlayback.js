@@ -14,6 +14,17 @@ export class TTSPlaybackService {
     }
   }
 
+  enqueueMultiple(agentId, audioUrls, onStart, onEnd) {
+    audioUrls.forEach((url, i) => {
+      this.enqueue(
+        agentId,
+        url,
+        i === 0 ? onStart : null,
+        i === audioUrls.length - 1 ? onEnd : null,
+      );
+    });
+  }
+
   async _playNext() {
     if (this.queue.length === 0) {
       this.isPlaying = false;

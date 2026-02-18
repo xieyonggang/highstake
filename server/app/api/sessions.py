@@ -104,7 +104,7 @@ async def upload_recording(
     from app.services.storage_service import StorageService
 
     storage = StorageService()
-    recording_key = f"recordings/{session_id}/{recording.filename}"
+    recording_key = f"sessions/{session_id}/recordings/{recording.filename}"
     file_bytes = await recording.read()
     await storage.upload(recording_key, file_bytes, recording.content_type or "video/webm")
 

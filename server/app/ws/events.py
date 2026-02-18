@@ -12,6 +12,8 @@ session_engines: dict[str, object] = {}  # session_id -> AgentEngine
 session_start_times: dict[str, float] = {}  # session_id -> start timestamp
 session_live_services: dict[str, object] = {}  # session_id -> LiveTranscriptionService
 session_locks: dict[str, asyncio.Lock] = {} # session_id -> Lock
+session_init_failed: dict[str, bool] = {} # session_id -> True if init permanently failed
+session_live_creating: dict[str, bool] = {} # session_id -> True if creation in progress
 session_exchange_data: dict[str, dict] = {} # session_id -> exchange data (preserved after cleanup)
 
 
@@ -52,24 +54,22 @@ async def handle_audio_chunk(session_id: str, sid: str, data: dict):
             f"pcm_bytes={len(pcm_bytes)}"
         )
 
+    # Bail early if initialization previously failed (syntax error, missing dep, etc.)
+    if session_init_failed.get(session_id):
+        return
+
     # Ensure engine is initialized
     if session_id not in session_engines:
-        logger.info(f"Session {session_id}: audio_chunk but no engine, initializing...")
+        if count <= 1:
+            logger.info(f"Session {session_id}: audio_chunk but no engine, initializing...")
         await initialize_agent_engine(session_id)
 
     # Ensure live transcription service is running (may need separate retry)
     live_service = session_live_services.get(session_id)
-    if not live_service:
-        logger.info(
-            f"Session {session_id}: no live service found, "
-            f"creating one now..."
-        )
+    if not live_service and not session_live_creating.get(session_id):
+        logger.info(f"Session {session_id}: no live service, creating...")
         await _ensure_live_service(session_id)
         live_service = session_live_services.get(session_id)
-        if live_service:
-            logger.info(f"Session {session_id}: live service created OK")
-        else:
-            logger.error(f"Session {session_id}: failed to create live service")
 
     if live_service:
         await live_service.send_audio(pcm_bytes)
@@ -230,6 +230,8 @@ async def cleanup_session(session_id: str):
 
     session_start_times.pop(session_id, None)
     session_locks.pop(session_id, None)
+    session_init_failed.pop(session_id, None)
+    session_live_creating.pop(session_id, None)
     _audio_chunk_count.pop(session_id, None)
 
 
@@ -273,12 +275,12 @@ async def initialize_agent_engine(session_id: str):
                         pre_extracted_claims = deck.claims_json
 
             from app.services.llm_client import LLMClient
-            from app.services.tts_service import TTSService
+            from app.services.tts_service import get_tts_service
             from app.services.agent_engine import SessionCoordinator
             from app.services.live_transcription import LiveTranscriptionService
 
             llm = LLMClient(settings.gemini_api_key)
-            tts = TTSService()
+            tts = get_tts_service()
 
             async def emit_callback(event: str, data: dict):
                 await sio.emit(event, data, room=f"session_{session_id}")
@@ -318,16 +320,20 @@ async def initialize_agent_engine(session_id: str):
             await _start_live_service_internal(session_id)
         except Exception as e:
             logger.error(f"Failed to initialize session coordinator for {session_id}: {e}")
+            session_init_failed[session_id] = True
 
 
 async def _ensure_live_service(session_id: str):
     """Create and start a live transcription service if one doesn't exist yet."""
-    logger.info(f"Session {session_id}: _ensure_live_service called")
     if session_id not in session_locks:
         session_locks[session_id] = asyncio.Lock()
 
-    async with session_locks[session_id]:
-        await _start_live_service_internal(session_id)
+    session_live_creating[session_id] = True
+    try:
+        async with session_locks[session_id]:
+            await _start_live_service_internal(session_id)
+    finally:
+        session_live_creating[session_id] = False
 
 
 async def _start_live_service_internal(session_id: str):
@@ -338,10 +344,6 @@ async def _start_live_service_internal(session_id: str):
     logger.info(f"Session {session_id}: _start_live_service_internal starting...")
 
     from app.config import settings
-    from app.services.live_transcription import LiveTranscriptionService
-
-    if not settings.gemini_api_key:
-        return
 
     async def emit_callback(event: str, data: dict):
         await sio.emit(event, data, room=f"session_{session_id}")
@@ -357,14 +359,29 @@ async def _start_live_service_internal(session_id: str):
                 )
 
     try:
-        live_service = LiveTranscriptionService(
-            session_id=session_id,
-            api_key=settings.gemini_api_key,
-            emit_callback=emit_callback,
-            on_final_transcript=on_final_transcript,
-        )
+        stt_backend = settings.stt_backend.lower()
+        if stt_backend == "whisper":
+            from app.services.live_transcription import WhisperTranscriptionService
+            live_service = WhisperTranscriptionService(
+                session_id=session_id,
+                emit_callback=emit_callback,
+                on_final_transcript=on_final_transcript,
+            )
+        else:
+            from app.services.live_transcription import LiveTranscriptionService
+            if not settings.gemini_api_key:
+                return
+            live_service = LiveTranscriptionService(
+                session_id=session_id,
+                api_key=settings.gemini_api_key,
+                emit_callback=emit_callback,
+                on_final_transcript=on_final_transcript,
+            )
         await live_service.start()
         session_live_services[session_id] = live_service
-        logger.info(f"Live transcription started for session {session_id}")
+        logger.info(
+            f"Live transcription started for session {session_id} "
+            f"(backend={stt_backend})"
+        )
     except Exception as e:
         logger.error(f"Failed to start live transcription for session {session_id}: {e}")

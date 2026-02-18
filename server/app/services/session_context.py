@@ -40,6 +40,7 @@ class CandidateQuestion:
     slide_index: Optional[int] = None
     relevance_score: float = 0.0
     audio_url: Optional[str] = None
+    audio_urls: list[str] = field(default_factory=list)
 
 
 @dataclass

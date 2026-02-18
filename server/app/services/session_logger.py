@@ -19,8 +19,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Path to agent templates (repo root / agents / templates)
-_TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "agents" / "templates"
+# Path to agent templates (server/app/agents/templates)
+_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "agents" / "templates"
 
 
 def _fmt_elapsed(seconds: float) -> str:

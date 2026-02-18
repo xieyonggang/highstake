@@ -1,7 +1,7 @@
 """System prompt templates for each AI agent persona.
 
 Supports two modes:
-1. Template-based prompts (from agents/templates/*.md) — preferred, richer context
+1. Template-based prompts (from app/agents/templates/*.md) — preferred, richer context
 2. Hardcoded fallback prompts — used when templates are not available
 """
 
@@ -39,20 +39,27 @@ The agent who asked the question is: {agent_name} ({agent_role}).
 Question asked: {question_text}
 {exchange_history}
 
+## Exchange Progress
+This is exchange turn {turn_number} of {max_turns} maximum.
+
 ## Instructions
 Evaluate whether the presenter's most recent response satisfactorily addresses the question.
 Consider the agent's satisfaction criteria above.
+
+Be a rigorous evaluator. In a real boardroom, panelists rarely accept the first answer without probing deeper. Unless the presenter provided specific data points, concrete evidence, or a truly comprehensive answer, you should follow up.
+
+On early turns (turn 1-2 of {max_turns}), STRONGLY prefer FOLLOW_UP over SATISFIED. Only return SATISFIED if the answer is genuinely thorough with specific evidence. A general or high-level answer warrants a follow-up to dig deeper.
 
 Respond with a JSON object:
 {{
   "verdict": "SATISFIED" | "FOLLOW_UP" | "ESCALATE",
   "reasoning": "Brief explanation of your evaluation",
-  "follow_up": "If verdict is FOLLOW_UP or ESCALATE, provide exactly ONE focused follow-up question. Do not combine multiple questions. Otherwise null."
+  "follow_up": "If verdict is FOLLOW_UP or ESCALATE, provide exactly ONE focused follow-up question that builds on the presenter's response. Reference what they said and probe deeper. Do not repeat the original question. Otherwise null."
 }}
 
-- SATISFIED: The presenter gave a specific, evidence-backed answer.
-- FOLLOW_UP: The answer was partial or vague; the agent wants to probe deeper.
-- ESCALATE: The answer was evasive, repeated claims without evidence, or deflected.
+- SATISFIED: The presenter gave a specific, evidence-backed, comprehensive answer that fully addresses the concern. Reserve this for truly strong answers.
+- FOLLOW_UP: The answer was partial, general, lacked specific data, or could be probed deeper. This is the most common and expected verdict.
+- ESCALATE: The answer was evasive, repeated claims without evidence, or deflected the question entirely.
 """
 
 
@@ -537,6 +544,8 @@ def build_evaluation_prompt(
     agent_id: str,
     question_text: str,
     exchange_history: str,
+    turn_number: int = 1,
+    max_turns: int = 3,
 ) -> str:
     """Build an evaluation prompt for assessing a presenter's response."""
     agent_templates = get_agent_templates(agent_id)
@@ -557,6 +566,8 @@ def build_evaluation_prompt(
         satisfaction_criteria=satisfaction_criteria,
         question_text=question_text,
         exchange_history=exchange_history,
+        turn_number=turn_number,
+        max_turns=max_turns,
     )
 
 

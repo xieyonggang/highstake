@@ -6,7 +6,7 @@
   "description": "AI-powered boardroom simulator for high-stakes presentation practice",
   "scripts": {
     "dev": "vite",
-    "dev:server": "cd server && uvicorn app.main:socket_app --reload --port 8000",
+    "dev:server": "cd server && KMP_DUPLICATE_LIB_OK=TRUE uvicorn app.main:socket_app --reload --port 8000",
     "dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
     "build": "vite build",
     "preview": "vite preview",

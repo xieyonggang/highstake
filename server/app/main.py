@@ -1,6 +1,9 @@
 import logging
 import os
 
+# Prevent OMP duplicate library crash when torch + ctranslate2 both load OpenMP
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import socketio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -11,7 +14,11 @@ from app.config import settings
 from app.api import sessions, decks, debrief
 from app.ws.handler import sio
 
-logging.basicConfig(level=logging.DEBUG if settings.debug else logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG if settings.debug else logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 # Suppress noisy third-party loggers
 logging.getLogger("google_genai").setLevel(logging.WARNING)

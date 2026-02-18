@@ -19,6 +19,7 @@ server/.env
 server/*.egg-info/
 server/build/
 *.db
+*.db-*
 
 # Local storage (TTS audio, recordings, deck thumbnails)
 data/

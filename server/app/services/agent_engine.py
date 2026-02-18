@@ -102,7 +102,8 @@ class SessionCoordinator:
         self._exchange_response_buffer: list[str] = []
         self._exchange_response_debounce: Optional[asyncio.Task] = None
         self._exchange_response_pause_secs: float = 3.0  # wait 3s of silence
-        self._exchange_min_words: int = 8  # need at least ~8 words
+        self._exchange_min_words: int = 5  # need at least ~5 words
+        self._assessment_in_progress: bool = False  # guard against concurrent assessments
 
         # Time warnings
         self._time_warning_80_sent = False
@@ -412,14 +413,16 @@ class SessionCoordinator:
     async def _call_on_agent(
         self, agent_id: str, candidate: CandidateQuestion
     ) -> None:
-        """Moderator calls on an agent. Agent speaks immediately."""
-        # Verify the runner still has a buffered question (may have been
-        # invalidated by a slide change between hand-raise and being called on)
-        runner = self.runners.get(agent_id)
-        if runner and not runner.buffered_question:
-            logger.info(
-                f"Agent {agent_id} was called on but has no buffered question "
-                f"(likely invalidated by slide change). Skipping."
+        """Moderator calls on an agent.
+
+        The coordinator delivers the question directly using the candidate
+        data from the queue, avoiding a race where a slide change could
+        invalidate the runner's buffered question between being selected
+        and delivering.
+        """
+        if not candidate or not candidate.text:
+            logger.warning(
+                f"Agent {agent_id} called on but no candidate question"
             )
             return
 
@@ -428,14 +431,37 @@ class SessionCoordinator:
         # Log moderator calling on agent
         await self.session_logger.log_moderator("call_on_agent", {
             "agent_id": agent_id,
-            "question_text": candidate.text if candidate else "",
-            "slide_index": candidate.slide_index if candidate else self.current_slide,
+            "question_text": candidate.text,
+            "slide_index": candidate.slide_index,
         })
 
         # Emit moderator transition TTS
         await self._emit_moderator_transition(agent_id)
 
-        # Signal the agent to deliver its question
+        # Coordinator delivers the question directly (no race with slide changes)
+        audio_urls = candidate.audio_urls or (
+            [candidate.audio_url] if candidate.audio_url else []
+        )
+        await self.emit(
+            "agent_question",
+            {
+                "agentId": agent_id,
+                "agentName": AGENT_NAMES.get(agent_id, agent_id),
+                "agentRole": AGENT_ROLES.get(agent_id, ""),
+                "agentTitle": AGENT_TITLES.get(agent_id, ""),
+                "text": candidate.text,
+                "audioUrl": audio_urls[0] if audio_urls else None,
+                "audioUrls": audio_urls,
+                "slideRef": candidate.slide_index,
+            },
+        )
+
+        # Store transcript entry
+        await self._store_transcript_entry(
+            agent_id, candidate.text, entry_type="question"
+        )
+
+        # Notify runner it's now in an exchange (sets state, clears buffer)
         await self.event_bus.publish(
             Event(
                 type=EventType.AGENT_CALLED_ON,
@@ -444,17 +470,25 @@ class SessionCoordinator:
             )
         )
 
-        # Small yield to let agent process the event
-        await asyncio.sleep(0.1)
+        # Publish agent spoke so other agents know
+        await self.event_bus.publish(
+            Event(
+                type=EventType.AGENT_SPOKE,
+                data={
+                    "agent_id": agent_id,
+                    "text": candidate.text,
+                    "slide_index": candidate.slide_index,
+                },
+                source=agent_id,
+            )
+        )
 
         # Create exchange
         exchange = Exchange(
             agent_id=agent_id,
-            question_text=candidate.text if candidate else "",
+            question_text=candidate.text,
             target_claim=candidate.target_claim if candidate else "",
-            slide_index=(
-                candidate.slide_index if candidate else self.current_slide
-            ),
+            slide_index=candidate.slide_index,
         )
         exchange.turns.append(
             ExchangeTurn(speaker="agent", text=exchange.question_text)
@@ -497,16 +531,22 @@ class SessionCoordinator:
         """Handle a presenter's response during an active exchange.
 
         Accumulates transcript segments and waits for the presenter to finish
-        speaking (3s pause + minimum 8 words) before triggering agent
+        speaking (3s pause + minimum words) before triggering agent
         assessment. This prevents the agent from jumping in mid-sentence.
         """
         exchange = self.session_context.active_exchange
         if not exchange:
+            logger.debug("_handle_exchange_response: no active exchange")
             return
 
         text = segment.get("text", "").strip()
         if not text:
             return
+
+        logger.info(
+            f"Exchange {exchange.id}: presenter segment received "
+            f"({len(text.split())} words): '{text[:80]}...'"
+        )
 
         # Reset exchange timeout since presenter is actively speaking
         self._cancel_exchange_timer()
@@ -522,6 +562,15 @@ class SessionCoordinator:
             f"({len(self._exchange_response_buffer)} segments)"
         )
 
+        # If assessment is already in progress, just buffer — don't start new debounce.
+        # The buffered segments will be picked up after the assessment completes.
+        if self._assessment_in_progress:
+            logger.debug(
+                f"Exchange {exchange.id}: assessment in progress, "
+                f"buffering segment ({word_count} words total)"
+            )
+            return
+
         # Cancel previous debounce if presenter is still speaking
         if (
             self._exchange_response_debounce
@@ -531,21 +580,37 @@ class SessionCoordinator:
 
         # Only start debounce if we have enough words
         if word_count >= self._exchange_min_words:
+            logger.info(
+                f"Exchange {exchange.id}: starting {self._exchange_response_pause_secs}s "
+                f"debounce ({word_count} words buffered)"
+            )
             self._exchange_response_debounce = asyncio.create_task(
                 self._debounced_exchange_assessment()
             )
-        # If under threshold, just keep accumulating — the exchange timeout
-        # will eventually resolve if presenter stays silent
+        else:
+            logger.debug(
+                f"Exchange {exchange.id}: below min words "
+                f"({word_count}/{self._exchange_min_words}), "
+                f"waiting for more segments"
+            )
 
     async def _debounced_exchange_assessment(self) -> None:
         """Wait for presenter to stop speaking, then assess the full response."""
         try:
+            logger.debug("Exchange debounce: waiting for presenter to stop speaking...")
             await asyncio.sleep(self._exchange_response_pause_secs)
         except asyncio.CancelledError:
+            logger.debug("Exchange debounce: cancelled (presenter still speaking)")
             return  # Presenter spoke again, debounce reset
+
+        # Guard: prevent concurrent assessments
+        if self._assessment_in_progress:
+            logger.info("Exchange debounce fired but assessment already in progress, skipping")
+            return
 
         exchange = self.session_context.active_exchange
         if not exchange:
+            logger.warning("Exchange debounce fired but no active exchange")
             self._exchange_response_buffer.clear()
             return
 
@@ -554,68 +619,213 @@ class SessionCoordinator:
         self._exchange_response_buffer.clear()
 
         if not full_response.strip():
+            logger.warning("Exchange debounce fired but empty response buffer")
             return
 
-        # Cancel timeout — we're processing now
-        self._cancel_exchange_timer()
-
-        # Record presenter turn
-        exchange.turns.append(
-            ExchangeTurn(speaker="presenter", text=full_response)
+        logger.info(
+            f"Exchange {exchange.id}: debounce fired, assessing presenter "
+            f"response ({len(full_response.split())} words): "
+            f"'{full_response[:100]}...'"
         )
 
-        # Log presenter response in exchange
-        await self.session_logger.log_agent_exchange(
-            exchange.agent_id,
-            "presenter_response",
-            {
-                "text": full_response,
-                "exchange_id": exchange.id,
-                "turn": exchange.turn_count,
-            },
-        )
-
-        agent_id = exchange.agent_id
-        max_turns = self._turn_limits.get(self.config["intensity"], 3)
-
-        # Check turn limit
-        if exchange.presenter_turn_count >= max_turns:
-            await self._resolve_exchange(exchange, ExchangeOutcome.TURN_LIMIT)
-            return
-
-        # Emit thinking indicator
-        await self.emit("agent_thinking", {"agentId": agent_id})
-
-        # Play filler IMMEDIATELY while LLM assesses
-        filler_url = self.filler_service.get_random_filler(agent_id)
-        if filler_url:
-            await self.emit(
-                "agent_filler",
-                {"agentId": agent_id, "audioUrl": filler_url},
-            )
-
-        # Ask the agent runner to assess (runs while filler plays ~1-2s)
-        runner = self.runners.get(agent_id)
-        if not runner:
-            await self._resolve_exchange(exchange, ExchangeOutcome.SATISFIED)
-            return
+        # Set guard — no new debounce assessments until this one completes
+        self._assessment_in_progress = True
 
         try:
-            result = await runner.handle_exchange_follow_up(exchange)
-        except Exception as e:
-            logger.warning(f"Follow-up assessment failed: {e}")
-            await self._resolve_exchange(exchange, ExchangeOutcome.SATISFIED)
-            return
+            await self._run_exchange_assessment(exchange, full_response)
+        finally:
+            self._assessment_in_progress = False
 
-        if result is None:
-            # Agent satisfied
-            exchange.evaluation_reasoning = "Agent satisfied with response"
-            await self._resolve_exchange(exchange, ExchangeOutcome.SATISFIED)
-        else:
-            # Agent has follow-up
-            exchange.evaluation_reasoning = result.get("reasoning", "")
-            await self._emit_agent_follow_up(
-                agent_id, result["text"], result.get("audio_url"), exchange
+    async def _run_exchange_assessment(
+        self, exchange: Exchange, full_response: str
+    ) -> None:
+        """Run the actual exchange assessment (extracted for guard pattern).
+
+        IMPORTANT: The exchange timer is NOT cancelled here — it serves as a
+        safety net. If the LLM call hangs, the timer will eventually fire and
+        force-resolve the exchange.
+        """
+        try:
+            # Record presenter turn
+            exchange.turns.append(
+                ExchangeTurn(speaker="presenter", text=full_response)
+            )
+
+            agent_id = exchange.agent_id
+            max_turns = self._turn_limits.get(
+                self.config.get("intensity", "moderate"), 3
+            )
+
+            logger.info(
+                f"Exchange {exchange.id}: recorded presenter turn "
+                f"(presenter_turns={exchange.presenter_turn_count}, "
+                f"agent_turns={exchange.agent_turn_count}, max={max_turns})"
+            )
+
+            # Log presenter response — fire-and-forget
+            asyncio.create_task(self.session_logger.log_agent_exchange(
+                agent_id,
+                "presenter_response",
+                {
+                    "text": full_response,
+                    "exchange_id": exchange.id,
+                    "turn": exchange.turn_count,
+                    "presenter_turns": exchange.presenter_turn_count,
+                    "max_turns": max_turns,
+                },
+            ))
+
+            # Check turn limit
+            if exchange.presenter_turn_count >= max_turns:
+                logger.info(
+                    f"Exchange {exchange.id}: turn limit reached "
+                    f"({exchange.presenter_turn_count}/{max_turns}), resolving"
+                )
+                await self._resolve_exchange(
+                    exchange, ExchangeOutcome.TURN_LIMIT
+                )
+                return
+
+            # Emit thinking indicator
+            await self.emit("agent_thinking", {"agentId": agent_id})
+
+            # Ask the agent runner to assess — with timeout so we never hang
+            runner = self.runners.get(agent_id)
+            if not runner:
+                logger.warning(
+                    f"No runner found for {agent_id}, resolving as satisfied"
+                )
+                await self._resolve_exchange(
+                    exchange, ExchangeOutcome.SATISFIED
+                )
+                return
+
+            logger.info(
+                f"Exchange {exchange.id}: calling follow-up assessment for "
+                f"{agent_id} (presenter turn {exchange.presenter_turn_count}, "
+                f"max {max_turns})"
+            )
+
+            try:
+                result = await asyncio.wait_for(
+                    runner.handle_exchange_follow_up(
+                        exchange, max_turns=max_turns
+                    ),
+                    timeout=20.0,  # 20s max for LLM evaluation + TTS
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Exchange {exchange.id}: follow-up assessment timed out "
+                    f"after 20s for {agent_id}, resolving as satisfied"
+                )
+                await self._resolve_exchange(
+                    exchange, ExchangeOutcome.SATISFIED
+                )
+                return
+            except Exception as e:
+                logger.warning(
+                    f"Exchange {exchange.id}: follow-up assessment failed "
+                    f"for {agent_id}: {e}"
+                )
+                await self._resolve_exchange(
+                    exchange, ExchangeOutcome.SATISFIED
+                )
+                return
+
+            if result is None:
+                logger.info(
+                    f"Exchange {exchange.id}: {agent_id} satisfied after "
+                    f"{exchange.presenter_turn_count} presenter turns"
+                )
+                exchange.evaluation_reasoning = "Agent satisfied with response"
+                await self._resolve_exchange(
+                    exchange, ExchangeOutcome.SATISFIED
+                )
+            else:
+                logger.info(
+                    f"Exchange {exchange.id}: {agent_id} following up — "
+                    f"{result.get('reasoning', '')[:100]}"
+                )
+                exchange.evaluation_reasoning = result.get("reasoning", "")
+
+                # Emit text immediately (no audio yet) for instant feedback
+                await self._emit_agent_follow_up(
+                    agent_id,
+                    result["text"],
+                    None,
+                    exchange,
+                    audio_urls=[],
+                )
+                # Restart exchange timer for the follow-up
+                await self._start_exchange_timer()
+
+                # Generate TTS in background and send audio when ready
+                asyncio.create_task(
+                    self._async_follow_up_tts(
+                        agent_id, result["text"], exchange.id
+                    )
+                )
+
+        except Exception as e:
+            logger.error(
+                f"Exchange {exchange.id}: assessment error: {e}",
+                exc_info=True,
+            )
+            # Don't leave exchange stuck — force resolve
+            try:
+                await self._resolve_exchange(
+                    exchange, ExchangeOutcome.SATISFIED
+                )
+            except Exception:
+                logger.error(
+                    f"Exchange {exchange.id}: failed to resolve after error",
+                    exc_info=True,
+                )
+                # Last resort — clear state so session isn't permanently stuck
+                self.session_context.active_exchange = None
+                self.session_context.state = SessionState.PRESENTING
+                await self.emit("session_state", {"state": "presenting"})
+
+    async def _async_follow_up_tts(
+        self, agent_id: str, text: str, exchange_id: str
+    ) -> None:
+        """Generate TTS for a follow-up, streaming each sentence to frontend.
+
+        Emits `agent_follow_up_audio` per sentence so the frontend can start
+        playing the first sentence (~2-3s) while the rest are still generating.
+        """
+        try:
+            from app.services.llm_client import split_sentences
+
+            sentences = split_sentences(text)
+            for i, sentence in enumerate(sentences):
+                try:
+                    url = await self.tts.synthesize(
+                        agent_id, sentence, session_id=self.session_id
+                    )
+                    if url:
+                        await self.emit(
+                            "agent_follow_up_audio",
+                            {
+                                "agentId": agent_id,
+                                "exchangeId": exchange_id,
+                                "audioUrl": url,
+                                "audioUrls": [url],
+                                "chunkIndex": i,
+                                "totalChunks": len(sentences),
+                            },
+                        )
+                        logger.info(
+                            f"Exchange {exchange_id}: TTS chunk {i+1}/"
+                            f"{len(sentences)} ready for {agent_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Exchange {exchange_id}: TTS chunk {i} failed: {e}"
+                    )
+        except Exception as e:
+            logger.warning(
+                f"Exchange {exchange_id}: follow-up TTS failed: {e}"
             )
 
     async def _emit_agent_follow_up(
@@ -624,6 +834,7 @@ class SessionCoordinator:
         text: str,
         audio_url: Optional[str],
         exchange: Exchange,
+        audio_urls: Optional[list[str]] = None,
     ) -> None:
         """Emit an agent follow-up question during an exchange."""
         exchange.turns.append(ExchangeTurn(speaker="agent", text=text))
@@ -632,6 +843,7 @@ class SessionCoordinator:
             agent_id, text, entry_type="follow_up"
         )
 
+        urls = audio_urls or ([audio_url] if audio_url else [])
         max_turns = self._turn_limits.get(self.config["intensity"], 3)
         await self.emit(
             "agent_follow_up",
@@ -640,7 +852,8 @@ class SessionCoordinator:
                 "agentName": AGENT_NAMES.get(agent_id, agent_id),
                 "agentRole": AGENT_ROLES.get(agent_id, ""),
                 "text": text,
-                "audioUrl": audio_url,
+                "audioUrl": urls[0] if urls else audio_url,
+                "audioUrls": urls,
                 "turnNumber": exchange.agent_turn_count,
                 "maxTurns": max_turns,
                 "exchangeId": exchange.id,
@@ -654,8 +867,13 @@ class SessionCoordinator:
         self, exchange: Exchange, outcome: ExchangeOutcome
     ) -> None:
         """Resolve the current exchange and transition back to PRESENTING."""
+        logger.info(
+            f"Exchange {exchange.id}: resolving as {outcome.value} "
+            f"(agent={exchange.agent_id}, turns={exchange.turn_count})"
+        )
         self._cancel_exchange_timer()
         self._exchange_response_buffer.clear()
+        self._assessment_in_progress = False
         if (
             self._exchange_response_debounce
             and not self._exchange_response_debounce.done()
@@ -666,19 +884,12 @@ class SessionCoordinator:
         exchange.outcome = outcome
         exchange.resolved_at = time.time()
 
-        # Log exchange resolution
-        await self.session_logger.log_agent_exchange(
-            exchange.agent_id, "resolved",
-            {
-                "exchange_id": exchange.id,
-                "outcome": outcome.value,
-                "turn_count": exchange.turn_count,
-                "reasoning": exchange.evaluation_reasoning,
-                "turns": [{"speaker": t.speaker, "text": t.text} for t in exchange.turns],
-            },
-        )
-
         agent_id = exchange.agent_id
+
+        # Log exchange resolution — fire-and-forget (don't await, can't block resolve)
+        asyncio.create_task(self._safe_log_exchange_resolved(exchange))
+
+        # Update context (all synchronous — can't hang)
         agent_ctx = self.session_context.get_agent_context(agent_id)
         agent_ctx.exchanges.append(exchange)
         if exchange.target_claim:
@@ -688,38 +899,59 @@ class SessionCoordinator:
         self.session_context.active_exchange = None
         self.session_context.state = SessionState.RESOLVING
 
-        # Update presenter profile
+        # Update presenter profile (synchronous)
         self._update_presenter_profile(agent_id, exchange)
 
-        await self.emit(
-            "exchange_resolved",
-            {
-                "exchangeId": exchange.id,
-                "agentId": agent_id,
-                "outcome": outcome.value,
-            },
-        )
+        # CRITICAL: Emit exchange_resolved to frontend FIRST
+        try:
+            await self.emit(
+                "exchange_resolved",
+                {
+                    "exchangeId": exchange.id,
+                    "agentId": agent_id,
+                    "outcome": outcome.value,
+                },
+            )
+            logger.info(
+                f"Exchange {exchange.id}: exchange_resolved emitted to frontend"
+            )
+        except Exception as e:
+            logger.error(
+                f"Exchange {exchange.id}: FAILED to emit exchange_resolved: {e}",
+                exc_info=True,
+            )
 
-        # Moderator bridge-back
-        await self._emit_moderator_bridge_back(exchange)
-
-        # Back to presenting (with breathing room)
+        # Back to presenting IMMEDIATELY (don't wait for moderator TTS)
         self._last_exchange_resolved_at = time.time()
         self.session_context.state = SessionState.PRESENTING
-        await self.emit("session_state", {"state": "presenting"})
+
+        try:
+            await self.emit("session_state", {"state": "presenting"})
+        except Exception as e:
+            logger.error(f"Exchange {exchange.id}: session_state emit failed: {e}")
 
         # Broadcast exchange resolved so agents resume
-        await self.event_bus.publish(
-            Event(
-                type=EventType.EXCHANGE_RESOLVED,
-                data={
-                    "agent_id": agent_id,
-                    "outcome": outcome.value,
-                    "exchange_id": exchange.id,
-                },
-                source="moderator",
+        try:
+            await self.event_bus.publish(
+                Event(
+                    type=EventType.EXCHANGE_RESOLVED,
+                    data={
+                        "agent_id": agent_id,
+                        "outcome": outcome.value,
+                        "exchange_id": exchange.id,
+                    },
+                    source="moderator",
+                )
             )
+        except Exception as e:
+            logger.error(f"Exchange {exchange.id}: event_bus publish failed: {e}")
+
+        logger.info(
+            f"Exchange {exchange.id}: fully resolved, state=PRESENTING"
         )
+
+        # Moderator bridge-back — fire-and-forget (TTS can be slow)
+        asyncio.create_task(self._safe_moderator_bridge_back(exchange))
 
     # --- Exchange timeout ---
 
@@ -751,6 +983,38 @@ class SessionCoordinator:
         ):
             self._exchange_timeout_task.cancel()
             self._exchange_timeout_task = None
+
+    # --- Fire-and-forget helpers for resolve ---
+
+    async def _safe_log_exchange_resolved(self, exchange: Exchange) -> None:
+        """Log exchange resolution without blocking the resolve flow."""
+        try:
+            await self.session_logger.log_agent_exchange(
+                exchange.agent_id, "resolved",
+                {
+                    "exchange_id": exchange.id,
+                    "outcome": exchange.outcome.value if exchange.outcome else "unknown",
+                    "turn_count": exchange.turn_count,
+                    "reasoning": exchange.evaluation_reasoning,
+                    "turns": [
+                        {"speaker": t.speaker, "text": t.text}
+                        for t in exchange.turns
+                    ],
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Exchange {exchange.id}: log error: {e}")
+
+    async def _safe_moderator_bridge_back(self, exchange: Exchange) -> None:
+        """Emit moderator bridge-back without blocking the resolve flow."""
+        try:
+            await self._emit_moderator_bridge_back(exchange)
+            logger.info(f"Exchange {exchange.id}: moderator bridge-back emitted")
+        except Exception as e:
+            logger.error(
+                f"Exchange {exchange.id}: moderator bridge-back failed: {e}",
+                exc_info=True,
+            )
 
     # --- Moderator speech ---
 

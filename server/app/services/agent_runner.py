@@ -89,19 +89,17 @@ class AgentContext:
         if data.get("agent_id") != self.agent_id:
             self.other_agent_questions.append(data)
 
-    def has_sufficient_context(self) -> bool:
-        # Need presenter to be past title/agenda slides (first 2-3 slides)
-        # AND have meaningful transcript before evaluating
+    def has_sufficient_context(self, min_words: int = 50) -> bool:
+        """Check if there's enough presenter speech to evaluate.
+
+        Context-based: requires meaningful transcript content regardless of
+        slide number. The presenter may speak a lot on early slides or
+        skip through slides quickly.
+        """
         total_words = sum(
             len(s.get("text", "").split()) for s in self.transcript_segments
         )
-        # Require at least slide 3 (past title + agenda) and 50+ words of content
-        if self.current_slide >= 3 and total_words >= 50:
-            return True
-        # Or if we have substantial transcript even on early slides (presenter speaking a lot)
-        if total_words >= 150:
-            return True
-        return False
+        return total_words >= min_words
 
     def get_transcript_text(self, last_n: int = 20) -> str:
         segments = self.transcript_segments[-last_n:]
@@ -208,27 +206,18 @@ class AgentRunner:
             new_slide = event.data.get("slide_index", 0)
             self.observation.set_slide(new_slide)
             self.context_manager.current_slide_index = new_slide
-            # Invalidate stale buffered question
+            # Only invalidate buffered question if we're still generating
+            # (not yet in queue). Once READY/in queue, the question about
+            # the previous slide is still valid and should be addressed.
             if (
                 self.buffered_question
                 and self.buffered_question.slide_index != new_slide
+                and self.state not in (
+                    AgentRunnerState.READY,
+                    AgentRunnerState.IN_EXCHANGE,
+                )
             ):
                 self.buffered_question = None
-                if self.state == AgentRunnerState.READY:
-                    self.state = AgentRunnerState.IDLE
-                    await self.event_bus.publish(
-                        Event(
-                            type=EventType.HAND_LOWERED,
-                            data={
-                                "agent_id": self.agent_id,
-                                "reason": "slide_changed",
-                            },
-                            source=self.agent_id,
-                        )
-                    )
-                    await self.emit(
-                        "agent_hand_lowered", {"agentId": self.agent_id}
-                    )
             if self.state == AgentRunnerState.IDLE:
                 self._new_input_event.set()
 
@@ -249,6 +238,11 @@ class AgentRunner:
 
         elif event.type == EventType.AGENT_CALLED_ON:
             if event.data.get("agent_id") == self.agent_id:
+                # Coordinator now delivers the question directly.
+                # Set our state to IN_EXCHANGE so we stop generating questions.
+                self.state = AgentRunnerState.IN_EXCHANGE
+                self.buffered_question = None
+                self._last_question_time = time.time()
                 self._called_on_event.set()
 
         elif event.type == EventType.CLAIMS_READY:
@@ -262,15 +256,55 @@ class AgentRunner:
     async def _run_loop(self):
         """Observe → evaluate → generate → raise hand → wait → speak."""
         try:
-            # Wait 3-5 min so presenter gets past title/agenda slides
-            initial_delay = 180.0 + (self._evaluation_interval * 2.0)
+            # Wait for enough presenter speech before first evaluation.
+            # Stagger agents slightly so they don't all evaluate at once.
+            from app.config import settings as app_settings
+            warmup_words = app_settings.agent_warmup_words
+
+            stagger_delay = 5.0 + (self._evaluation_interval * 0.5)
+            await asyncio.sleep(stagger_delay)
             logger.info(
-                f"Agent {self.agent_id}: waiting {initial_delay:.0f}s "
-                f"before first evaluation"
+                f"Agent {self.agent_id}: warming up, waiting for "
+                f"{warmup_words} words of presenter speech..."
             )
-            await self._log_state("INIT", "WAITING", f"initial_delay={initial_delay:.0f}s")
-            await asyncio.sleep(initial_delay)
-            await self._log_state("WAITING", "IDLE", "initial_delay_complete")
+            await self._log_state("INIT", "WARMING_UP", f"waiting for {warmup_words} words")
+
+            # Wait until presenter has spoken enough (context-based, not time-based)
+            _warmup_check_interval = 3.0
+            _warmup_checks = 0
+            while not self._stop_event.is_set():
+                total_words = sum(
+                    len(s.get("text", "").split())
+                    for s in self.observation.transcript_segments
+                )
+                if total_words >= warmup_words:
+                    logger.info(
+                        f"Agent {self.agent_id}: warmup threshold met "
+                        f"({total_words}/{warmup_words} words)"
+                    )
+                    break
+                _warmup_checks += 1
+                if _warmup_checks % 5 == 1:  # log every ~15s
+                    logger.info(
+                        f"Agent {self.agent_id}: warmup waiting — "
+                        f"{total_words}/{warmup_words} words, "
+                        f"{len(self.observation.transcript_segments)} segments"
+                    )
+                try:
+                    await asyncio.wait_for(
+                        self._new_input_event.wait(),
+                        timeout=_warmup_check_interval,
+                    )
+                    self._new_input_event.clear()
+                except asyncio.TimeoutError:
+                    pass
+
+            logger.info(
+                f"Agent {self.agent_id}: warmup complete — "
+                f"{len(self.observation.transcript_segments)} segments, "
+                f"slide {self.observation.current_slide}"
+            )
+            await self._log_state("WARMING_UP", "IDLE", "sufficient_context")
 
             while not self._stop_event.is_set():
                 if self.state == AgentRunnerState.IDLE:
@@ -291,8 +325,8 @@ class AgentRunner:
                     if self.observation.exchange_active:
                         continue
 
-                    # Skip if not enough context
-                    if not self.observation.has_sufficient_context():
+                    # Skip if not enough context (same threshold as warmup)
+                    if not self.observation.has_sufficient_context(min_words=warmup_words):
                         continue
 
                     # Evaluate
@@ -333,17 +367,34 @@ class AgentRunner:
                                 f"(slide={candidate.slide_index})"
                             )
 
-                            # Wait until moderator calls on us
+                            # Wait until moderator calls on us.
+                            # Don't count time while another exchange is active —
+                            # the moderator can't call on us during an exchange,
+                            # so we should wait patiently.
                             self._called_on_event.clear()
-                            try:
-                                await asyncio.wait_for(
-                                    self._called_on_event.wait(),
-                                    timeout=60.0,
-                                )
-                            except asyncio.TimeoutError:
-                                # Timed out waiting — lower hand and retry
+                            _idle_wait_secs = 0.0
+                            _max_idle_wait = 120.0  # only timeout after 120s of idle time
+                            _timed_out = False
+                            while not self._stop_event.is_set():
+                                try:
+                                    await asyncio.wait_for(
+                                        self._called_on_event.wait(),
+                                        timeout=2.0,
+                                    )
+                                    break  # called on!
+                                except asyncio.TimeoutError:
+                                    pass
+                                # Only count toward timeout when no exchange is active
+                                if not self.observation.exchange_active:
+                                    _idle_wait_secs += 2.0
+                                if _idle_wait_secs >= _max_idle_wait:
+                                    _timed_out = True
+                                    break
+
+                            if _timed_out:
                                 logger.info(
-                                    f"Agent {self.agent_id} hand-raise timed out"
+                                    f"Agent {self.agent_id} hand-raise timed out "
+                                    f"after {_idle_wait_secs:.0f}s idle wait"
                                 )
                                 self.buffered_question = None
                                 self.state = AgentRunnerState.IDLE
@@ -453,7 +504,11 @@ class AgentRunner:
         # Higher chance of asking with unchallenged claims or time pressure
         result = False
         reason = "no_trigger"
-        if unchallenged:
+        if self.question_count == 0 and transcript_growth >= 2:
+            # First question after warmup — be aggressive
+            result = True
+            reason = "first_question"
+        elif unchallenged:
             result = True
             reason = "unchallenged_claims"
         elif transcript_growth >= 3 and time_pressure > 0.3:
@@ -522,43 +577,56 @@ class AgentRunner:
             target_claim=target_claim,
         )
 
-        question_text = None
+        # Stream LLM → collect sentences → fire off TTS tasks in parallel
+        sentences = []
+        tts_tasks = []
+
         try:
+            context_messages = [
+                {"role": "user", "content": "Ask exactly ONE focused question now. Do not ask multiple questions or combine questions. Keep it to a single, direct question."}
+            ]
+
+            async def _stream_and_tts():
+                async for sentence in self.llm.generate_question_streaming(
+                    system_prompt=prompt,
+                    context_messages=context_messages,
+                ):
+                    sentences.append(sentence)
+                    # Start TTS for this sentence immediately (don't await)
+                    task = asyncio.create_task(
+                        self.tts.synthesize(self.agent_id, sentence, self.session_id)
+                    )
+                    tts_tasks.append(task)
+
             if self._llm_semaphore:
                 async with self._llm_semaphore:
-                    question_text = await self.llm.generate_question(
-                        system_prompt=prompt,
-                        context_messages=[
-                            {"role": "user", "content": "Ask exactly ONE focused question now. Do not ask multiple questions or combine questions. Keep it to a single, direct question."}
-                        ],
-                    )
+                    await _stream_and_tts()
             else:
-                question_text = await self.llm.generate_question(
-                    system_prompt=prompt,
-                    context_messages=[
-                        {"role": "user", "content": "Ask exactly ONE focused question now. Do not ask multiple questions or combine questions. Keep it to a single, direct question."}
-                    ],
-                )
+                await _stream_and_tts()
+
         except Exception as e:
             logger.warning(
-                f"LLM failed for {self.agent_id}: {e}. Using fallback."
+                f"LLM streaming failed for {self.agent_id}: {e}. Using fallback."
             )
-            question_text = self._get_fallback_question()
+            fallback_text = self._get_fallback_question()
+            sentences = [fallback_text]
+            tts_tasks = [asyncio.create_task(
+                self.tts.synthesize(self.agent_id, fallback_text, self.session_id)
+            )]
 
-        audio_url = None
-        try:
-            audio_url = await self.tts.synthesize(
-                self.agent_id, question_text, session_id=self.session_id
-            )
-        except Exception as e:
-            logger.warning(f"TTS failed for {self.agent_id}: {e}. Text-only.")
+        # Wait for all TTS to complete
+        audio_results = await asyncio.gather(*tts_tasks, return_exceptions=True)
+        audio_urls = [u for u in audio_results if isinstance(u, str)]
+
+        question_text = " ".join(sentences) if sentences else self._get_fallback_question()
 
         candidate = CandidateQuestion(
             agent_id=self.agent_id,
             text=question_text,
             target_claim=target_claim,
             slide_index=self.observation.current_slide,
-            audio_url=audio_url,
+            audio_url=audio_urls[0] if audio_urls else None,
+            audio_urls=audio_urls,
             relevance_score=0.8,
         )
 
@@ -573,63 +641,26 @@ class AgentRunner:
                     "target_claim": candidate.target_claim,
                     "slide_index": candidate.slide_index,
                     "audio_url": candidate.audio_url,
+                    "audio_urls": candidate.audio_urls,
                 },
             )
 
         return candidate
 
     async def _deliver_question(self):
-        """Called when moderator says 'go ahead'. Emit the buffered question."""
-        if not self.buffered_question:
-            return
+        """Called after moderator calls on us. Coordinator now handles delivery.
 
-        q = self.buffered_question
-        await self._log_state("READY", "SPEAKING", f"delivering question: {q.text[:80]}")
-        self.state = AgentRunnerState.SPEAKING
-        self._last_question_time = time.time()
+        This just updates internal bookkeeping. The actual question emission
+        and transcript storage is done by the coordinator in _call_on_agent.
+        """
+        # State is already set to IN_EXCHANGE by _on_event(AGENT_CALLED_ON)
         self.question_count += 1
-
-        self.previous_questions.append(
-            {"agent_id": self.agent_id, "text": q.text}
-        )
-
-        # Store transcript entry
-        await self._store_transcript_entry(q.text)
-
-        # Emit to frontend — audio is already generated!
-        await self.emit(
-            "agent_question",
-            {
-                "agentId": self.agent_id,
-                "agentName": AGENT_NAMES.get(self.agent_id, self.agent_id),
-                "agentRole": AGENT_ROLES.get(self.agent_id, ""),
-                "agentTitle": AGENT_TITLES.get(self.agent_id, ""),
-                "text": q.text,
-                "audioUrl": q.audio_url,
-                "slideRef": q.slide_index,
-            },
-        )
-
-        # Publish so other agents + coordinator know
-        await self.event_bus.publish(
-            Event(
-                type=EventType.AGENT_SPOKE,
-                data={
-                    "agent_id": self.agent_id,
-                    "text": q.text,
-                    "slide_index": q.slide_index,
-                },
-                source=self.agent_id,
-            )
-        )
-
-        self.state = AgentRunnerState.IN_EXCHANGE
-        self.buffered_question = None
+        await self._log_state("CALLED_ON", "IN_EXCHANGE", "coordinator delivered question")
 
     # --- Exchange follow-up (called by coordinator) ---
 
     async def handle_exchange_follow_up(
-        self, exchange: Exchange
+        self, exchange: Exchange, max_turns: int = 3
     ) -> Optional[dict]:
         """Evaluate presenter response and generate follow-up if needed.
 
@@ -647,6 +678,8 @@ class AgentRunner:
             agent_id=exchange.agent_id,
             question_text=exchange.question_text,
             exchange_history=exchange_history_text,
+            turn_number=exchange.presenter_turn_count,
+            max_turns=max_turns,
         )
 
         try:
@@ -662,6 +695,10 @@ class AgentRunner:
 
         verdict = evaluation.get("verdict", "SATISFIED").upper()
         reasoning = evaluation.get("reasoning", "")
+        logger.info(
+            f"Exchange follow-up eval for {self.agent_id}: "
+            f"verdict={verdict}, reasoning='{reasoning[:120]}'"
+        )
 
         # Log the exchange evaluation
         if self._session_logger:
@@ -685,19 +722,11 @@ class AgentRunner:
             if not follow_up:
                 return None
 
-            audio_url = None
-            try:
-                audio_url = await self.tts.synthesize(
-                    self.agent_id, follow_up, session_id=self.session_id
-                )
-            except Exception as e:
-                logger.warning(
-                    f"TTS failed for follow-up {self.agent_id}: {e}"
-                )
-
+            # Return text immediately — TTS will be handled async by coordinator
             return {
                 "text": follow_up,
-                "audio_url": audio_url,
+                "audio_url": None,
+                "audio_urls": [],
                 "reasoning": reasoning,
             }
 

@@ -54,13 +54,13 @@ export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev,
         >
           ← Previous
         </button>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 h-8 flex items-center">
           {captionText ? (
-            <p className="text-gray-800 text-xs text-center truncate" title={captionText}>
-              {captionText.split(/\s+/).slice(-20).join(' ')}
+            <p className="text-gray-800 text-xs text-center w-full line-clamp-2 leading-4" title={captionText}>
+              {captionText}
             </p>
           ) : (
-            <p className="text-gray-400 text-xs text-center">
+            <p className="text-gray-400 text-xs text-center w-full">
               {currentSlide + 1} / {totalSlides}
             </p>
           )}

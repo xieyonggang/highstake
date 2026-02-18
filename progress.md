@@ -1,6 +1,6 @@
 # HighStake — Implementation Progress
 
-**Last Updated:** 2026-02-18
+**Last Updated:** 2026-02-19
 **Current Phase:** Phase 2 — Core Intelligence + Real-Time Engine (in progress)
 
 ---
@@ -25,9 +25,10 @@
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Gemini Live API for real-time STT | Done | `live_transcription.py` — streams PCM audio, emits transcript segments |
+| Local Whisper STT (faster-whisper) | Done | `live_transcription.py` — `WhisperTranscriptionService` with VAD, cpu_threads=1 to avoid OpenMP deadlock |
 | Gemini TTS with distinct voices per agent | Done | `tts_service.py` — per-agent voice configs, session-scoped file storage |
 | Filler audio for latency masking | Done | `filler_service.py` — pre-recorded lead-in phrases per agent, served to frontend |
-| Streaming LLM -> TTS chain (token-by-token) | Not Started | PRD 4.2.2 — currently generates full text then TTS, not streaming chain |
+| Streaming LLM -> TTS chain (sentence-level) | Done | LLM streams sentences, each TTS'd in parallel; ~1s time-to-first-audio |
 | Pre-recorded lead-in phrases crossfade | Not Started | PRD 4.2.3 — fillers play but no seamless crossfade into streamed audio |
 
 ### Autonomous Agent System
@@ -40,8 +41,9 @@
 | Hand-raise queue with priority scoring | Done | Fairness + relevance scoring, queue UI on frontend |
 | Agent state machine (IDLE -> EVALUATING -> GENERATING -> READY -> SPEAKING -> IN_EXCHANGE -> COOLDOWN) | Done | Full state machine in AgentRunner |
 | Single-question enforcement per turn | Done | Prompt + user message enforce one focused question |
-| Agent warm-up delay (3-5 min) | Done | 180s + staggered offset before first evaluation |
-| Sufficient context check (slide >= 3 or 150+ words) | Done | `has_sufficient_context()` in AgentContext |
+| Agent warm-up delay (configurable) | Done | `agent_warmup_words` setting + staggered offset before first evaluation |
+| First-question trigger after warmup | Done | Agents immediately generate first question once warmup threshold met |
+| Sufficient context check (configurable word count) | Done | `has_sufficient_context()` in AgentContext |
 
 ### Context Stack (5-Layer)
 
@@ -62,7 +64,7 @@
 | Immutable templates (persona, domain-knowledge) | Done | `agents/templates/{agent}/` — checked into git |
 | Session folder with agent context | Done | `data/sessions/{session_id}/` — created at session start |
 | Persona + domain-knowledge copied to session | Done | `session_logger.py` `copy_agent_templates()` |
-| Deck stored in session folder | Done | Uploaded directly to `sessions/{session_id}/{deck_id}/` |
+| Deck stored in session folder | Done | Uploaded to `sessions/{session_id}/decks/{deck_id}/` |
 | Parsed slides saved as slides.md | Done | `deck_parser.py` `_build_slides_markdown()` |
 | Session created on page load | Done | `SetupPhase.jsx` creates session in useEffect |
 | Claims extraction from deck | Done | `claim_extractor.py` — LLM extracts claims per slide |
@@ -84,6 +86,7 @@
 |---------|--------|-------|
 | Session state machine (PRESENTING -> QA_TRIGGER -> EXCHANGE -> RESOLVING) | Done | `SessionState` enum + coordinator logic |
 | Agent follow-up evaluation (SATISFIED / FOLLOW_UP / ESCALATE) | Done | `build_evaluation_prompt()` + `handle_exchange_follow_up()` |
+| Streamed follow-up audio (text-first, audio-async) | Done | Text emitted instantly after LLM eval, TTS streamed per-sentence via `agent_follow_up_audio` |
 | Exchange turn limits by intensity | Done | friendly=2, moderate=3, adversarial=4 |
 | Exchange timeout (45s) | Done | `_exchange_timeout_handler()` |
 | Exchange response debounce (wait for presenter to finish) | Done | 8+ words + 3s silence before agent evaluates |
@@ -193,8 +196,43 @@
 
 - **External intelligence pipeline** (Layer 5) — web search enrichment for news/market data
 - **Board Preparation Dossier** — pre-session intelligence briefing
-- **Streaming LLM -> TTS chain** — token-by-token streaming for lower latency
+- ~~Streaming LLM -> TTS chain~~ — DONE: sentence-level streaming with parallel TTS
 - **Cross-agent pile-ons** — another agent adding a related point after exchange
 - **Focus briefs per agent** — generated at session start from deck analysis
 - **Full session context files** — session-state.md, exchange-history.md (shared), debrief-notes.md
 - **Session recording playback** — timeline scrubbing, jump-to-exchange
+
+---
+
+## Session Summary — 2026-02-18 (Streaming LLM→TTS)
+
+### What was done:
+
+1. **Streaming LLM→TTS chain** — `generate_question_streaming()` async generator streams Gemini output sentence-by-sentence
+2. **Sentence splitter** — `split_sentences()` helper splits on `.?!` while ignoring abbreviations (Mr., Dr., U.S., etc.), minimum 10-char chunks
+3. **Parallel sentence TTS** — `synthesize_sentences()` fires off TTS for all sentences concurrently via `asyncio.gather()`
+4. **AgentRunner streaming pipeline** — `_generate_question()` now streams LLM tokens, fires TTS per sentence as it arrives, with fallback to non-streaming on error
+5. **Follow-up parallel TTS** — `handle_exchange_follow_up()` splits follow-up text into sentences and TTS's them in parallel
+6. **Multi-audio emission** — Both `agent_question` and `agent_follow_up` events now include `audioUrls` list alongside backward-compat `audioUrl`
+7. **Frontend `enqueueMultiple()`** — TTSPlaybackService plays sentence audio chunks sequentially with onStart on first / onEnd on last
+8. **Frontend event handlers** — `agent_question` and `agent_follow_up` handlers use `audioUrls` when available, fallback to single `audioUrl`
+
+### Expected improvement:
+- Time-to-first-audio reduced from ~3-5s to ~1s (LLM first sentence ~0.3-0.5s + single sentence TTS ~0.8s)
+- Multiple small WAV files per question instead of one large one
+
+---
+
+## Session Summary — 2026-02-19
+
+### What was done:
+
+1. **Fixed CTranslate2 decoder deadlock** — `model.transcribe()` returned fast but `for seg in segs:` deadlocked due to conflicting OpenMP libraries (numpy vs ctranslate2). Fixed with `cpu_threads=1` in WhisperModel constructor + `OMP_NUM_THREADS=1` env var.
+2. **Fixed live transcription init spam** — Added `session_live_creating` and `session_init_failed` guard flags to prevent hundreds of re-entrant `_ensure_live_service` calls per second from audio chunks.
+3. **Fixed agents never speaking after warmup** — Added `first_question` trigger in `_evaluate_should_ask()` so agents generate their first question immediately after warmup instead of waiting for strict heuristics that never fired with low transcript growth.
+4. **Optimized exchange follow-up latency (19s → ~6s)** — Changed from sequential pipeline to streamed:
+   - Follow-up text emitted to frontend immediately after LLM evaluation (~4s)
+   - TTS generated per-sentence in background, each chunk streamed to frontend via new `agent_follow_up_audio` event
+   - Frontend plays first sentence while remaining sentences still generating
+5. **Deck folder restructure** — Moved from `sessions/{session_id}/{deck_id}/` to `sessions/{session_id}/decks/{deck_id}/`
+6. **Cleaned up diagnostic logging** — Removed verbose thread-level whisper debug logs, kept concise summary line

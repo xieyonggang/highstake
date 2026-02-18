@@ -23,7 +23,7 @@ class DeckParserService:
         """Full pipeline: parse file, generate thumbnails, store in DB.
 
         If session_id is provided, files are stored directly in the session
-        folder at sessions/{session_id}/{deck_id}/ instead of decks/{deck_id}/.
+        folder at sessions/{session_id}/decks/{deck_id}/ instead of decks/{deck_id}/.
         """
         filename_lower = filename.lower()
         is_pptx = filename_lower.endswith(".pptx")
@@ -51,7 +51,7 @@ class DeckParserService:
             storage = StorageService()
             deck_id = str(uuid.uuid4())
             if session_id:
-                prefix = f"sessions/{session_id}/{deck_id}"
+                prefix = f"sessions/{session_id}/decks/{deck_id}"
             else:
                 prefix = f"decks/{deck_id}"
 

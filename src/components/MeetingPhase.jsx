@@ -136,13 +136,16 @@ export default function MeetingPhase() {
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl });
       removeHandRaised(data.agentId);
-      showCaption(`${agent.name}: ${data.text}`, 10000);
+      const agentCaption = `${agent.name}: ${data.text}`;
+      showCaption(agentCaption, 10000);
 
-      if (data.audioUrl && ttsRef.current) {
-        ttsRef.current.enqueue(
-          data.agentId,
-          data.audioUrl,
-          (id) => setActiveSpeaker(id),
+      const urls = data.audioUrls?.length ? data.audioUrls :
+                   data.audioUrl ? [data.audioUrl] : [];
+
+      if (urls.length && ttsRef.current) {
+        ttsRef.current.enqueueMultiple(
+          data.agentId, urls,
+          (id) => { setActiveSpeaker(id); showCaption(agentCaption); },
           () => { clearActiveSpeaker(); setCaptionText(''); },
         );
       } else {
@@ -224,18 +227,35 @@ export default function MeetingPhase() {
       const agent = findAgent(data.agentId);
       const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       addMessage({ agent, text: data.text, time, audioUrl: data.audioUrl, isFollowUp: true });
-      showCaption(`${agent.name}: ${data.text}`, 10000);
+      const followUpCaption = `${agent.name}: ${data.text}`;
+      showCaption(followUpCaption, 10000);
 
-      if (data.audioUrl && ttsRef.current) {
-        ttsRef.current.enqueue(
-          data.agentId,
-          data.audioUrl,
-          (id) => setActiveSpeaker(id),
+      const urls = data.audioUrls?.length ? data.audioUrls :
+                   data.audioUrl ? [data.audioUrl] : [];
+
+      if (urls.length && ttsRef.current) {
+        ttsRef.current.enqueueMultiple(
+          data.agentId, urls,
+          (id) => { setActiveSpeaker(id); showCaption(followUpCaption); },
           () => { clearActiveSpeaker(); setCaptionText(''); },
         );
       } else {
         setActiveSpeaker(data.agentId);
         setTimeout(() => clearActiveSpeaker(), 3000);
+      }
+    });
+
+    socket.on('agent_follow_up_audio', (data) => {
+      // Streams in one chunk at a time — enqueue each as it arrives
+      if (data.audioUrl && ttsRef.current) {
+        const agent = findAgent(data.agentId);
+        const caption = agent ? `${agent.name} (follow-up)` : '';
+        const isLast = data.chunkIndex === (data.totalChunks || 1) - 1;
+        ttsRef.current.enqueueMultiple(
+          data.agentId, [data.audioUrl],
+          (id) => { setActiveSpeaker(id); if (caption) showCaption(caption); },
+          isLast ? () => { clearActiveSpeaker(); setCaptionText(''); } : null,
+        );
       }
     });
 

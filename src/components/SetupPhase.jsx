@@ -16,10 +16,12 @@ export default function SetupPhase() {
   const [isStarting, setIsStarting] = useState(false);
   const [showInvitePopup, setShowInvitePopup] = useState(false);
   const fileInputRef = useRef(null);
+  const creatingRef = useRef(false);
 
   // Create session immediately on mount so deck uploads go into session folder
   useEffect(() => {
-    if (!sessionId) {
+    if (!sessionId && !creatingRef.current) {
+      creatingRef.current = true;
       createSession({
         interaction: config.interaction,
         intensity: config.intensity,
@@ -28,6 +30,7 @@ export default function SetupPhase() {
         setSessionId(session.id);
       }).catch((err) => {
         console.error('Failed to create session on mount:', err);
+        creatingRef.current = false;
       });
     }
   }, []);
@@ -265,7 +268,7 @@ export default function SetupPhase() {
         {/* Start Button */}
         <button
           onClick={handleStart}
-          disabled={!config.interaction || !config.intensity || isUploading || isStarting}
+          disabled={!config.interaction || !config.intensity || isUploading || isStarting || !sessionId}
           className="w-full py-3.5 rounded-xl text-sm font-bold bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-30 transition-all shadow-lg shadow-blue-200"
         >
           {isStarting ? 'Starting...' : 'Enter the Boardroom'}
