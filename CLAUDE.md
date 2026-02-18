@@ -81,3 +81,7 @@ Only one API key needed: `GEMINI_API_KEY` (set in `server/.env`). Browser Web Sp
 - Fully async Python backend — use `async/await` for all DB and API operations
 - Functional React components with hooks only (no class components)
 - Backend config via Pydantic Settings (`server/app/config.py`), reads from `.env`
+
+## Progress Tracking
+
+Before committing and pushing to git remote, always update `progress.md` at the project root to reflect any changes made in the session. Mark newly completed features as "Done", update "Partial" items, and add any new items discovered during implementation. Append a dated session summary at the bottom of the file.
