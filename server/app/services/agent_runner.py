@@ -19,6 +19,7 @@ from app.services.agent_prompts import (
     build_agent_prompt,
     build_evaluation_prompt,
 )
+from app.services.template_loader import get_agent_templates
 
 # Per-agent fallback questions when LLM fails
 FALLBACK_QUESTIONS = {
@@ -54,11 +55,11 @@ logger = logging.getLogger(__name__)
 
 
 class AgentRunnerState(str, Enum):
-    IDLE = "idle"
+    LOADING = "loading"
+    LISTENING = "listening"
     EVALUATING = "evaluating"
     GENERATING = "generating"
     READY = "ready"
-    SPEAKING = "speaking"
     IN_EXCHANGE = "in_exchange"
     COOLDOWN = "cooldown"
 
@@ -145,7 +146,7 @@ class AgentRunner:
         self.agent_session_ctx = session_context
 
         # Internal state
-        self.state = AgentRunnerState.IDLE
+        self.state = AgentRunnerState.LISTENING
         self.observation = AgentContext(agent_id=agent_id)
         self.context_manager = ContextManager()
         self.buffered_question: Optional[CandidateQuestion] = None
@@ -157,6 +158,9 @@ class AgentRunner:
         self._stop_event = asyncio.Event()
         self._new_input_event = asyncio.Event()
         self._called_on_event = asyncio.Event()
+        self._claims_ready_event = asyncio.Event()
+        if claims_by_slide:
+            self._claims_ready_event.set()
 
         # Timing
         self._session_start: float = time.time()
@@ -199,7 +203,7 @@ class AgentRunner:
         if event.type == EventType.TRANSCRIPT_UPDATE:
             self.observation.add_transcript(event.data)
             self.context_manager.add_segment(event.data)
-            if self.state == AgentRunnerState.IDLE:
+            if self.state == AgentRunnerState.LISTENING:
                 self._new_input_event.set()
 
         elif event.type == EventType.SLIDE_CHANGED:
@@ -218,7 +222,7 @@ class AgentRunner:
                 )
             ):
                 self.buffered_question = None
-            if self.state == AgentRunnerState.IDLE:
+            if self.state == AgentRunnerState.LISTENING:
                 self._new_input_event.set()
 
         elif event.type == EventType.EXCHANGE_STARTED:
@@ -227,9 +231,9 @@ class AgentRunner:
         elif event.type == EventType.EXCHANGE_RESOLVED:
             self.observation.set_exchange_active(False, None)
             if event.data.get("agent_id") == self.agent_id:
-                self.state = AgentRunnerState.COOLDOWN
-                asyncio.create_task(self._cooldown_then_idle())
-            elif self.state == AgentRunnerState.IDLE:
+                self.state = AgentRunnerState.LISTENING
+                self._new_input_event.set()
+            elif self.state == AgentRunnerState.LISTENING:
                 # After another agent's exchange resolves, re-evaluate
                 self._new_input_event.set()
 
@@ -247,29 +251,94 @@ class AgentRunner:
 
         elif event.type == EventType.CLAIMS_READY:
             self.claims_by_slide = event.data.get("claims_by_slide", {})
+            self._claims_ready_event.set()
 
         elif event.type == EventType.SESSION_ENDING:
+            self.state = AgentRunnerState.COOLDOWN
             await self.stop()
 
     # --- Main autonomous loop ---
 
     async def _run_loop(self):
-        """Observe → evaluate → generate → raise hand → wait → speak."""
+        """Load context → warm up → evaluate → generate → raise hand → speak."""
         try:
-            # Wait for enough presenter speech before first evaluation.
-            # Stagger agents slightly so they don't all evaluate at once.
             from app.config import settings as app_settings
             warmup_words = app_settings.agent_warmup_words
 
+            # Stagger agents slightly so they don't all start at once.
             stagger_delay = 5.0 + (self._evaluation_interval * 0.5)
             await asyncio.sleep(stagger_delay)
+
+            # --- Phase 1: LOADING ---
+            # Wait for claims, pre-load templates, validate prompt building.
+            self.state = AgentRunnerState.LOADING
+            await self._log_state("INIT", "LOADING", "waiting for claims")
+            logger.info(f"Agent {self.agent_id}: LOADING — waiting for claims...")
+
+            _claims_timeout_secs = 30.0
+            try:
+                await asyncio.wait_for(
+                    self._claims_ready_event.wait(),
+                    timeout=_claims_timeout_secs,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Agent {self.agent_id}: claims timeout after "
+                    f"{_claims_timeout_secs}s, proceeding without claims"
+                )
+
+            if self._stop_event.is_set():
+                return
+
+            # Pre-load agent templates (warms the template cache)
+            templates = get_agent_templates(self.agent_id)
+
+            # Pre-build a baseline system prompt to validate templates work
+            try:
+                build_agent_prompt(
+                    agent_id=self.agent_id,
+                    intensity=self.config.get("intensity", "moderate"),
+                    focus_areas=self.config.get("focus_areas", []),
+                    slide_index=0,
+                    total_slides=self.deck_manifest.get("totalSlides", 6),
+                    slide_title="",
+                    slide_content="",
+                    slide_notes="",
+                    transcript="",
+                    previous_questions=[],
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Agent {self.agent_id}: baseline prompt build failed: {e}"
+                )
+
+            claims_count = sum(
+                len(v) for v in self.claims_by_slide.values()
+            )
+            logger.info(
+                f"Agent {self.agent_id}: LOADED — "
+                f"{claims_count} slide claims, "
+                f"{len(templates)} templates ready"
+            )
+
+            await self.emit(
+                "agent_loaded",
+                {
+                    "agentId": self.agent_id,
+                    "claimsCount": claims_count,
+                    "templatesLoaded": list(templates.keys()),
+                },
+            )
+
+            await self._log_state("LOADING", "WARMING_UP", f"{claims_count} claims loaded")
+
+            # --- Phase 2: WARMING UP ---
+            # Wait for enough presenter speech before first evaluation.
             logger.info(
                 f"Agent {self.agent_id}: warming up, waiting for "
                 f"{warmup_words} words of presenter speech..."
             )
-            await self._log_state("INIT", "WARMING_UP", f"waiting for {warmup_words} words")
 
-            # Wait until presenter has spoken enough (context-based, not time-based)
             _warmup_check_interval = 3.0
             _warmup_checks = 0
             while not self._stop_event.is_set():
@@ -304,10 +373,11 @@ class AgentRunner:
                 f"{len(self.observation.transcript_segments)} segments, "
                 f"slide {self.observation.current_slide}"
             )
-            await self._log_state("WARMING_UP", "IDLE", "sufficient_context")
+            self.state = AgentRunnerState.LISTENING
+            await self._log_state("WARMING_UP", "LISTENING", "sufficient_context")
 
             while not self._stop_event.is_set():
-                if self.state == AgentRunnerState.IDLE:
+                if self.state == AgentRunnerState.LISTENING:
                     # Wait for new input or periodic re-evaluation
                     try:
                         await asyncio.wait_for(
@@ -397,7 +467,7 @@ class AgentRunner:
                                     f"after {_idle_wait_secs:.0f}s idle wait"
                                 )
                                 self.buffered_question = None
-                                self.state = AgentRunnerState.IDLE
+                                self.state = AgentRunnerState.LISTENING
                                 await self.event_bus.publish(
                                     Event(
                                         type=EventType.HAND_LOWERED,
@@ -416,18 +486,16 @@ class AgentRunner:
                             # Deliver the question
                             await self._deliver_question()
                         else:
-                            self.state = AgentRunnerState.IDLE
+                            self.state = AgentRunnerState.LISTENING
                     else:
-                        self.state = AgentRunnerState.IDLE
+                        self.state = AgentRunnerState.LISTENING
 
-                elif self.state in (
-                    AgentRunnerState.SPEAKING,
-                    AgentRunnerState.IN_EXCHANGE,
-                ):
+                elif self.state == AgentRunnerState.IN_EXCHANGE:
                     await asyncio.sleep(1)
 
                 elif self.state == AgentRunnerState.COOLDOWN:
-                    await asyncio.sleep(1)
+                    # Terminal state — session is ending
+                    break
 
                 elif self.state == AgentRunnerState.READY:
                     # Shouldn't normally reach here — wait is in IDLE→READY flow
@@ -440,13 +508,6 @@ class AgentRunner:
             pass
         except Exception as e:
             logger.error(f"AgentRunner {self.agent_id} loop error: {e}", exc_info=True)
-
-    async def _cooldown_then_idle(self):
-        """Post-exchange cooldown before resuming evaluation."""
-        await asyncio.sleep(self._cooldown_secs)
-        if self.state == AgentRunnerState.COOLDOWN:
-            self.state = AgentRunnerState.IDLE
-            self._new_input_event.set()
 
     # --- Question evaluation ---
 

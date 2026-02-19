@@ -39,8 +39,9 @@
 | EventBus pub/sub for decoupled communication | Done | `event_bus.py` — typed events, subscribe/subscribe_all |
 | SessionCoordinator (orchestrator) | Done | `agent_engine.py` — manages moderator, queue, exchanges |
 | Hand-raise queue with priority scoring | Done | Fairness + relevance scoring, queue UI on frontend |
-| Agent state machine (IDLE -> EVALUATING -> GENERATING -> READY -> SPEAKING -> IN_EXCHANGE -> COOLDOWN) | Done | Full state machine in AgentRunner |
+| Agent state machine (LOADING -> LISTENING -> EVALUATING -> GENERATING -> READY -> IN_EXCHANGE -> COOLDOWN) | Done | Two-phase init, LISTENING replaces IDLE, COOLDOWN is terminal |
 | Single-question enforcement per turn | Done | Prompt + user message enforce one focused question |
+| Two-phase agent init (LOADING → LISTENING) | Done | Phase 1: wait for claims + pre-load templates; Phase 2: warmup on presenter speech |
 | Agent warm-up delay (configurable) | Done | `agent_warmup_words` setting + staggered offset before first evaluation |
 | First-question trigger after warmup | Done | Agents immediately generate first question once warmup threshold met |
 | Sufficient context check (configurable word count) | Done | `has_sufficient_context()` in AgentContext |
@@ -236,3 +237,7 @@
    - Frontend plays first sentence while remaining sentences still generating
 5. **Deck folder restructure** — Moved from `sessions/{session_id}/{deck_id}/` to `sessions/{session_id}/decks/{deck_id}/`
 6. **Cleaned up diagnostic logging** — Removed verbose thread-level whisper debug logs, kept concise summary line
+7. **Two-phase agent init (LOADING → LISTENING)** — Agents now explicitly load claims + templates before warmup. Emits `agent_loaded` WS event to frontend.
+8. **Renamed IDLE → LISTENING** — Agent state reflects that panelists are always listening, not idle.
+9. **COOLDOWN is now terminal** — Only entered on SESSION_ENDING. After an exchange, agents return directly to LISTENING (inter-question cooldown enforced by `_evaluate_should_ask` heuristic).
+10. **Removed dead SPEAKING state** — Was in the enum but never assigned anywhere.
