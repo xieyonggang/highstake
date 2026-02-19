@@ -7,14 +7,8 @@ export default function SlideViewer({ currentSlide, totalSlides, onNext, onPrev,
   const hasThumbnail = slideData && deckId && slideData.thumbnail_url;
 
   return (
-    <div className="bg-white rounded-2xl border border-blue-200/60 overflow-hidden flex flex-col h-full shadow-sm">
-      <div className="bg-blue-50/80 px-4 py-2 flex items-center justify-between border-b border-blue-200/60 flex-shrink-0">
-        <span className="text-gray-500 text-xs font-medium">SLIDES</span>
-        <span className="text-gray-400 text-xs">
-          {currentSlide + 1} / {totalSlides}
-        </span>
-      </div>
-      <div className="flex-1 bg-gradient-to-br from-white via-white to-blue-50/50 overflow-hidden flex items-center justify-center p-4">
+    <div className="bg-white border border-blue-200/60 overflow-hidden flex flex-col h-full">
+      <div className="flex-1 bg-gradient-to-br from-white via-white to-blue-50/50 overflow-hidden flex items-center justify-center p-2">
         {hasThumbnail ? (
           <img
             src={slideData.thumbnail_url}

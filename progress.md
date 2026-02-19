@@ -241,3 +241,4 @@
 8. **Renamed IDLE → LISTENING** — Agent state reflects that panelists are always listening, not idle.
 9. **COOLDOWN is now terminal** — Only entered on SESSION_ENDING. After an exchange, agents return directly to LISTENING (inter-question cooldown enforced by `_evaluate_should_ask` heuristic).
 10. **Removed dead SPEAKING state** — Was in the enum but never assigned anywhere.
+11. **Moved mic/camera controls to top bar** — Freed ~144px vertical space for deck display by removing bottom controls bar, SlideViewer header, and reducing padding.

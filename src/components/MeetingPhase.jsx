@@ -449,6 +449,26 @@ export default function MeetingPhase() {
             {INTERACTION_MODES.find((m) => m.id === config.interaction)?.label}
           </span>
           <button
+            onClick={handleMuteToggle}
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${
+              isMuted
+                ? 'bg-red-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-blue-100'
+            }`}
+          >
+            {isMuted ? '🔇' : '🎤'}
+          </button>
+          <button
+            onClick={handleCameraToggle}
+            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${
+              !isCameraOn
+                ? 'bg-red-500 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-blue-100'
+            }`}
+          >
+            📹
+          </button>
+          <button
             onClick={endSession}
             className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors"
           >
@@ -462,7 +482,7 @@ export default function MeetingPhase() {
         {/* Left: Presentation Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Slide Display */}
-          <div className="flex-1 p-4 overflow-y-auto">
+          <div className="flex-1 overflow-hidden">
             <SlideViewer
               currentSlide={currentSlide}
               totalSlides={totalSlides}
@@ -472,29 +492,6 @@ export default function MeetingPhase() {
               deckId={deckId}
               captionText={captionsOn ? captionText : ''}
             />
-          </div>
-          {/* Bottom Controls */}
-          <div className="flex-shrink-0 px-4 py-3 border-t border-blue-200/60 bg-white/50 flex items-center justify-center gap-3">
-            <button
-              onClick={handleMuteToggle}
-              className={`w-10 h-10 rounded-full flex items-center justify-center text-base transition-all ${
-                isMuted
-                  ? 'bg-red-500 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-blue-100'
-              }`}
-            >
-              {isMuted ? '🔇' : '🎤'}
-            </button>
-            <button
-              onClick={handleCameraToggle}
-              className={`w-10 h-10 rounded-full flex items-center justify-center text-base transition-all ${
-                !isCameraOn
-                  ? 'bg-red-500 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-blue-100'
-              }`}
-            >
-              📹
-            </button>
           </div>
         </div>
 
