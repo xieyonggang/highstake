@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-HighStake is an AI-powered boardroom simulator for high-stakes presentation practice. Executives rehearse presentations with 4 AI-powered panel members (Diana Chen/Moderator, Marcus Webb/Skeptic, Priya Sharma/Analyst, James O'Brien/Contrarian) who challenge and question their pitch. Currently at Phase 2 (Core Intelligence) — real AI interactions via Gemini API.
+HighStake is an AI-powered boardroom simulator for high-stakes presentation practice. Executives rehearse presentations with 4 AI-powered panel members (Diana Chen/Moderator, Marcus Webb/Skeptic, Priya Sharma/Analyst, James O'Brien/Contrarian) who challenge and question their pitch. Currently at Phase 2 (Core Intelligence) — real AI interactions via OpenAI or Gemini API. detailed requirement is in `PRD.md`, progress of the implementation is in `PROGRESS.md`.
 
 ## Commands
 
@@ -33,7 +33,7 @@ cd server && pytest
 ## Architecture
 
 **Frontend**: React 18 + Vite, Zustand for state, Tailwind CSS, Socket.IO client
-**Backend**: FastAPI + Python-SocketIO, SQLAlchemy async (SQLite), Gemini API (LLM + TTS)
+**Backend**: FastAPI + Python-SocketIO, SQLAlchemy async (SQLite), OpenAI or Gemini API (LLM + TTS + SST)
 
 ### Phase-Based UI Flow
 
@@ -72,7 +72,7 @@ All files stored in `./data` directory (TTS audio, recordings, uploads). Served 
 
 ### External Dependencies
 
-Only one API key needed: `GEMINI_API_KEY` (set in `server/.env`). Browser Web Speech API handles speech-to-text. No cloud storage — everything is local filesystem + SQLite.
+Only one API key needed: `GEMINI_API_KEY`  or `OPENAI_API_KEY` (set in `server/.env`), use external TTS, SST or LLM via APIs. No cloud storage — everything is local filesystem.
 
 ## Conventions
 
@@ -84,4 +84,4 @@ Only one API key needed: `GEMINI_API_KEY` (set in `server/.env`). Browser Web Sp
 
 ## Progress Tracking
 
-Before committing and pushing to git remote, always update `progress.md` at the project root to reflect any changes made in the session. Mark newly completed features as "Done", update "Partial" items, and add any new items discovered during implementation. Append a dated session summary at the bottom of the file.
+Before committing and pushing to git remote, always update `PROGRESS.md` at the project root to reflect any changes made in the session. Mark newly completed features as "Done", update "Partial" items, and add any new items discovered during implementation. Append a dated session summary at the bottom of the file.
