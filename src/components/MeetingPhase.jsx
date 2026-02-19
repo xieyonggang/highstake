@@ -190,26 +190,6 @@ export default function MeetingPhase() {
       removeHandRaised(data.agentId);
     });
 
-    // Pre-fetch filler audio for instant playback during exchanges
-    socket.on('filler_urls', (data) => {
-      const fillers = data?.fillers || {};
-      Object.values(fillers).flat().forEach((url) => {
-        fetch(url).catch(() => {}); // warm browser cache
-      });
-    });
-
-    // Play agent filler audio (bridges silence while LLM evaluates)
-    socket.on('agent_filler', (data) => {
-      if (data.audioUrl && ttsRef.current) {
-        ttsRef.current.enqueue(
-          data.agentId,
-          data.audioUrl,
-          (id) => setActiveSpeaker(id),
-          () => clearActiveSpeaker(),
-        );
-      }
-    });
-
     socket.on('session_state', (data) => {
       setExchangeState(data);
       if (data.state === 'exchange' && data.maxTurns) {

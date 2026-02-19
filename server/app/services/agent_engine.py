@@ -30,7 +30,6 @@ from app.services.session_context import (
     SessionContext,
     SessionState,
 )
-from app.services.filler_service import FillerService
 from app.services.session_logger import SessionLogger
 from app.services.tts_service import TTSService
 
@@ -90,9 +89,6 @@ class SessionCoordinator:
         self._exchange_timeout_task: Optional[asyncio.Task] = None
         self._exchange_timeout_secs: int = 45
         self._turn_limits = {"friendly": 2, "moderate": 3, "adversarial": 4}
-
-        # Filler audio service
-        self.filler_service = FillerService()
 
         # Post-exchange cooldown
         self._last_exchange_resolved_at: float = 0

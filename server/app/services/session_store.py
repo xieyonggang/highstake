@@ -13,6 +13,13 @@ from datetime import datetime, timezone
 from app.config import settings
 
 
+def _json_default(obj):
+    """Handle datetime and other non-serializable types."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def _session_dir(session_id: str) -> str:
     return os.path.join(settings.storage_dir, "sessions", session_id)
 
@@ -47,7 +54,7 @@ def create_session(data: dict) -> dict:
     directory = _session_dir(session_id)
     os.makedirs(directory, exist_ok=True)
     with open(_session_path(session_id), "w") as f:
-        json.dump(session, f, indent=2)
+        json.dump(session, f, indent=2, default=_json_default)
     return session
 
 
@@ -70,7 +77,7 @@ def update_session(session_id: str, updates: dict) -> dict | None:
             session[key] = value
     session["updated_at"] = _now_iso()
     with open(_session_path(session_id), "w") as f:
-        json.dump(session, f, indent=2)
+        json.dump(session, f, indent=2, default=_json_default)
     return session
 
 

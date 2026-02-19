@@ -148,14 +148,6 @@ async def handle_start_session(session_id: str, sid: str):
         except Exception as e:
             logger.error(f"Session {session_id}: error emitting moderator greeting: {e}")
 
-        # Send filler audio URLs for frontend pre-fetching
-        filler_urls = engine.filler_service.get_all_filler_urls()
-        if filler_urls:
-            await sio.emit(
-                "filler_urls",
-                {"fillers": filler_urls},
-                room=f"session_{session_id}",
-            )
     else:
         logger.warning(f"Session {session_id}: no engine found, emitting text-only greeting")
         # No engine (no API key) — emit text-only greeting

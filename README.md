@@ -4,6 +4,10 @@
 
 HighStake lets executives rehearse critical presentations in a realistic virtual boardroom with AI-powered panel members who challenge, question, and stress-test your pitch — so you're battle-ready before the real thing.
 
+![Live boardroom session with AI panel](docs/screenshots/meeting-phase.png)
+
+Present your deck while four AI panelists — a moderator, a skeptic CFO, a data-driven analyst, and a contrarian board advisor — listen in real time, raise hands to challenge your claims, and engage in multi-turn Q&A exchanges. After the session, get scored across five dimensions with personalized coaching.
+
 ## Features
 
 ### Pre-Session Setup (Moderator-Led)
@@ -32,55 +36,46 @@ HighStake lets executives rehearse critical presentations in a realistic virtual
 
 ## Tech Stack
 
-- **Frontend**: React 18 + Vite
-- **Styling**: Tailwind CSS
-- **Fonts**: Playfair Display (headings) + DM Sans (body)
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | React 18 + Vite, Zustand, Tailwind CSS |
+| **Backend** | FastAPI + Python-SocketIO (async) |
+| **LLM** | Gemini 2.5 Flash (question generation + coaching) |
+| **TTS** | OpenAI TTS (distinct voice per agent) |
+| **STT** | OpenAI Realtime / Whisper / Gemini Live |
+| **Storage** | Local filesystem + JSON (no database) |
 
 ## Getting Started
 
 ```bash
-# Install dependencies
+# Install frontend dependencies
 npm install
 
-# Start dev server
-npm run dev
+# Install backend dependencies
+cd server && pip install -e .
 
-# Build for production
-npm run build
+# Set API key
+echo "GEMINI_API_KEY=your-key" > server/.env
+
+# Run both frontend + backend
+npm run dev:all
 ```
 
-## Roadmap
-
-### Phase 2
-- [ ] Real-time speech-to-text (Deepgram / Whisper)
-- [ ] Claude API integration for dynamic agent responses
-- [ ] Text-to-speech with distinct voices per agent (ElevenLabs)
-- [ ] Webcam capture and session recording
-- [ ] PPTX parsing with `python-pptx`
-
-### Phase 3
-- [ ] Real-time agent interruptions with natural timing
-- [ ] Multi-session tracking and improvement over time
-- [ ] Team/org accounts
-- [ ] Export to PDF reports
+The frontend runs on `http://localhost:3000`, the backend on `http://localhost:8000`.
 
 ## Architecture
 
 ```
-src/
-├── components/
-│   ├── AgentTile.jsx        # AI agent video tile
-│   ├── ChatMessage.jsx      # Meeting chat message
-│   ├── MeetingPhase.jsx     # Live boardroom session
-│   ├── PresenterTile.jsx    # Presenter webcam tile
-│   ├── ReviewPhase.jsx      # Post-session debrief
-│   ├── SetupPhase.jsx       # Moderator-led configuration
-│   └── SlideViewer.jsx      # Slide deck viewer
-├── utils/
-│   └── constants.js         # Agents, modes, questions, slides
-├── App.jsx                  # Phase router
-├── main.jsx                 # Entry point
-└── index.css                # Global styles + Tailwind
+src/                              server/app/
+├── components/                   ├── api/            # REST routes
+│   ├── SetupPhase.jsx            ├── ws/             # WebSocket events
+│   ├── MeetingPhase.jsx          ├── services/       # Business logic
+│   └── ReviewPhase.jsx           │   ├── agent_engine.py
+├── stores/                       │   ├── agent_runner.py
+│   ├── sessionStore.js           │   ├── llm_client.py
+│   └── meetingStore.js           │   ├── tts_service.py
+└── App.jsx                       │   └── session_store.py
+                                  └── models/         # Enums only
 ```
 
 ## License
