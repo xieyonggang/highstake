@@ -763,3 +763,205 @@ class WhisperTranscriptionService:
         logger.info(
             f"Whisper transcription stopped for session {self.session_id}"
         )
+
+
+# ---------------------------------------------------------------------------
+# OpenAI (gpt-4o-mini-transcribe) backend
+# ---------------------------------------------------------------------------
+
+class OpenAITranscriptionService:
+    """Cloud STT using OpenAI's gpt-4o-mini-transcribe with the same
+    VAD + batch-transcribe pattern as WhisperTranscriptionService."""
+
+    SAMPLE_RATE = 16000
+
+    def __init__(
+        self,
+        session_id: str,
+        api_key: str,
+        emit_callback: Callable[[str, dict], Awaitable[None]],
+        on_final_transcript: Callable[[dict], Awaitable[None]],
+    ):
+        from openai import AsyncOpenAI
+
+        self.session_id = session_id
+        self._client = AsyncOpenAI(api_key=api_key)
+        self.emit_callback = emit_callback
+        self.on_final_transcript = on_final_transcript
+        self._running = False
+
+        # VAD state
+        self._speaking = False
+        self._silence_count = 0
+        self._audio_buffer = bytearray()
+        self._send_count = 0
+
+        # Transcription task queue
+        self._transcribe_queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._transcribe_task: asyncio.Task | None = None
+
+    async def start(self):
+        """Start the transcription worker."""
+        self._running = True
+        self._transcribe_task = asyncio.create_task(self._transcribe_worker())
+        logger.info(
+            f"Session {self.session_id}: OpenAI transcription started"
+        )
+
+    async def send_audio(self, pcm_bytes: bytes):
+        """Process a chunk of raw 16kHz 16-bit PCM audio with VAD."""
+        if not self._running:
+            return
+
+        self._send_count += 1
+        rms = _pcm_rms(pcm_bytes)
+
+        if self._send_count == 1:
+            logger.info(
+                f"Session {self.session_id}: [openai-stt] first audio chunk, "
+                f"pcm_bytes={len(pcm_bytes)}, rms={rms:.0f}"
+            )
+        elif self._send_count % 500 == 0:
+            logger.info(
+                f"Session {self.session_id}: [openai-stt] chunk #{self._send_count}, "
+                f"rms={rms:.0f}, speaking={self._speaking}, "
+                f"buffer={len(self._audio_buffer)} bytes"
+            )
+
+        if not self._speaking:
+            if rms > _RMS_SPEECH_THRESHOLD:
+                self._speaking = True
+                self._silence_count = 0
+                self._audio_buffer.clear()
+                self._audio_buffer.extend(pcm_bytes)
+                logger.info(
+                    f"Session {self.session_id}: "
+                    f"[openai-stt] VAD speech START (rms={rms:.0f})"
+                )
+            return
+
+        # Currently speaking — accumulate audio
+        self._audio_buffer.extend(pcm_bytes)
+
+        if rms < _RMS_SILENCE_THRESHOLD:
+            self._silence_count += 1
+            if self._silence_count >= _SILENCE_CHUNKS_FOR_END:
+                logger.info(
+                    f"Session {self.session_id}: [openai-stt] VAD speech END, "
+                    f"buffer={len(self._audio_buffer)} bytes "
+                    f"({len(self._audio_buffer) / (self.SAMPLE_RATE * 2):.1f}s)"
+                )
+                audio_data = bytes(self._audio_buffer)
+                self._audio_buffer.clear()
+                self._speaking = False
+                self._silence_count = 0
+                await self._transcribe_queue.put(audio_data)
+        else:
+            self._silence_count = 0
+
+    def _pcm_to_wav_buf(self, pcm_bytes: bytes) -> io.BytesIO:
+        """Package raw PCM into an in-memory WAV file for the OpenAI API."""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(self.SAMPLE_RATE)
+            wf.writeframes(pcm_bytes)
+        buf.seek(0)
+        buf.name = "audio.wav"
+        return buf
+
+    async def _transcribe_worker(self):
+        """Background worker that transcribes audio buffers from the queue."""
+        while self._running:
+            try:
+                audio_data = await asyncio.wait_for(
+                    self._transcribe_queue.get(), timeout=1.0
+                )
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
+
+            try:
+                duration_s = len(audio_data) / (self.SAMPLE_RATE * 2)
+                logger.info(
+                    f"Session {self.session_id}: [openai-stt] worker dequeued "
+                    f"{len(audio_data)} bytes ({duration_s:.1f}s), "
+                    f"transcribing..."
+                )
+
+                wav_buf = self._pcm_to_wav_buf(audio_data)
+                transcript = await self._client.audio.transcriptions.create(
+                    model="gpt-4o-mini-transcribe-2025-12-15",
+                    file=wav_buf,
+                    language="en",
+                )
+                text = transcript.text.strip() if transcript.text else ""
+
+                logger.info(
+                    f"Session {self.session_id}: [openai-stt] transcribed: "
+                    f"'{text[:80]}' (len={len(text)})"
+                )
+
+                if not text:
+                    continue
+                if _is_noise_transcript(text):
+                    logger.info(
+                        f"Session {self.session_id}: [openai-stt] filtered "
+                        f"as noise: '{text}'"
+                    )
+                    continue
+                text = _strip_noise_tokens(text)
+                logger.info(
+                    f"Session {self.session_id}: "
+                    f"[openai-stt] transcript: '{text}'"
+                )
+
+                # Emit interim + final (batch gives full utterance at once)
+                interim_segment = {
+                    "type": "interim",
+                    "text": text,
+                    "is_final": False,
+                    "confidence": 0.9,
+                }
+                await self.emit_callback(
+                    "transcript_segment", interim_segment
+                )
+
+                final_segment = {
+                    "type": "final",
+                    "text": text,
+                    "is_final": True,
+                    "confidence": 0.9,
+                }
+                await self.emit_callback(
+                    "transcript_segment", final_segment
+                )
+
+                try:
+                    await self.on_final_transcript(final_segment)
+                except Exception as e:
+                    logger.error(
+                        f"Session {self.session_id}: "
+                        f"on_final_transcript error: {e}"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Session {self.session_id}: "
+                    f"[openai-stt] transcription error: {e}",
+                    exc_info=True,
+                )
+
+    async def stop(self):
+        """Stop the transcription service."""
+        self._running = False
+        if self._transcribe_task and not self._transcribe_task.done():
+            self._transcribe_task.cancel()
+            try:
+                await self._transcribe_task
+            except asyncio.CancelledError:
+                pass
+        logger.info(
+            f"OpenAI transcription stopped for session {self.session_id}"
+        )

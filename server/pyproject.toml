@@ -18,6 +18,7 @@ dependencies = [
     "PyMuPDF>=1.24.0",
     "Pillow>=10.3.0",
     "aiofiles>=24.1.0",
+    "openai>=1.0.0",
 ]
 
 [project.optional-dependencies]

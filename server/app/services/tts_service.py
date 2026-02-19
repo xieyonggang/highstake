@@ -42,6 +42,20 @@ KOKORO_VOICE_MAP = {
     "cco": "bf_isabella",
 }
 
+# Maps agent IDs to OpenAI TTS voice names
+OPENAI_VOICE_MAP = {
+    "moderator": settings.openai_tts_voice_moderator,
+    "skeptic": settings.openai_tts_voice_skeptic,
+    "analyst": settings.openai_tts_voice_analyst,
+    "contrarian": settings.openai_tts_voice_contrarian,
+    "technologist": "alloy",
+    "coo": "fable",
+    "ceo": "ash",
+    "cio": "coral",
+    "chro": "shimmer",
+    "cco": "ballad",
+}
+
 
 def _pcm_to_wav(
     pcm_data: bytes,
@@ -155,8 +169,33 @@ class KokoroTTSService:
         return wav_bytes
 
 
+class OpenAITTSService:
+    """OpenAI cloud TTS backend."""
+
+    def __init__(self):
+        from openai import AsyncOpenAI
+        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+    async def synthesize_to_wav(
+        self, text: str, voice_name: str
+    ) -> Optional[bytes]:
+        response = await self._client.audio.speech.create(
+            model="gpt-4o-mini-tts-2025-12-15",
+            voice=voice_name,
+            input=text,
+            response_format="wav",
+        )
+
+        wav_bytes = response.content
+        logger.info(
+            f"OpenAI TTS: voice={voice_name}, wav_bytes={len(wav_bytes)}, "
+            f"text_len={len(text)}"
+        )
+        return wav_bytes
+
+
 class TTSService:
-    """TTS service that delegates to Gemini or Kokoro based on config."""
+    """TTS service that delegates to Gemini, Kokoro, or OpenAI based on config."""
 
     def __init__(self):
         self.storage_dir = settings.storage_dir
@@ -166,6 +205,10 @@ class TTSService:
             self._backend = KokoroTTSService()
             self._voice_map = KOKORO_VOICE_MAP
             logger.info("TTS backend: Kokoro (local)")
+        elif self.backend_name == "openai":
+            self._backend = OpenAITTSService()
+            self._voice_map = OPENAI_VOICE_MAP
+            logger.info("TTS backend: OpenAI (cloud)")
         else:
             self._backend = GeminiTTSService()
             self._voice_map = AGENT_VOICE_MAP

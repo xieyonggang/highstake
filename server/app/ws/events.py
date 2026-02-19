@@ -367,6 +367,17 @@ async def _start_live_service_internal(session_id: str):
                 emit_callback=emit_callback,
                 on_final_transcript=on_final_transcript,
             )
+        elif stt_backend == "openai":
+            from app.services.live_transcription import OpenAITranscriptionService
+            if not settings.openai_api_key:
+                logger.warning(f"Session {session_id}: no OpenAI API key, skipping STT")
+                return
+            live_service = OpenAITranscriptionService(
+                session_id=session_id,
+                api_key=settings.openai_api_key,
+                emit_callback=emit_callback,
+                on_final_transcript=on_final_transcript,
+            )
         else:
             from app.services.live_transcription import LiveTranscriptionService
             if not settings.gemini_api_key:
