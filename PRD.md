@@ -1,7 +1,7 @@
 # HighStake — Product Requirements Document
 
-**Version:** 3.0
-**Last Updated:** February 18, 2026
+**Version:** 3.1
+**Last Updated:** February 19, 2026
 **Status:** Active Development
 **North Star:** Every session should feel indistinguishable from a real boardroom — zero awkward silences, contextually sharp questions, natural multi-turn exchanges, and seamless flow between challenge and presentation.
 **Key Architecture Principle:** Agent personas are immutable templates; each session spawns isolated, session-scoped context folders that accumulate live intelligence. The character never changes — only what they know grows.
@@ -82,6 +82,8 @@ These principles govern every technical and UX decision in HighStake:
 5. **Presenter control, always.** The presenter chooses the rules of engagement. The system adapts to them, not the other way around.
 
 6. **Fail gracefully, never silently.** If a service degrades (TTS fails, search is slow), the experience adapts smoothly — the user should never see a loading spinner in the middle of a boardroom conversation.
+
+7. **Human-level realism.** Agents must exhibit the imperfections, emotional dynamics, and social behaviors of real humans — not the polished, turn-based perfection of chatbots. See [FEATURE_HUMAN_BEHAVIORAL_REALISM.md](FEATURE_HUMAN_BEHAVIORAL_REALISM.md) for the complete 7-dimension realism system.
 
 ---
 
