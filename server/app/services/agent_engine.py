@@ -109,6 +109,10 @@ class SessionCoordinator:
         self._time_warning_80_sent = False
         self._time_warning_90_sent = False
 
+        # Presenter silence gate — don't call on agents while presenter is speaking
+        self._last_transcript_time: float = 0.0
+        self._presenter_silence_secs: float = 5.0
+
         # Moderator loop task
         self._moderator_task: Optional[asyncio.Task] = None
         self._transcript_entry_count: int = 0
@@ -243,6 +247,10 @@ class SessionCoordinator:
             and segment.get("is_final")
         ):
             await self._handle_exchange_response(segment)
+
+        # Track last transcript time for presenter silence gate
+        if segment.get("is_final"):
+            self._last_transcript_time = time.time()
 
         # Broadcast to all agents via event bus
         if segment.get("is_final"):
@@ -398,6 +406,12 @@ class SessionCoordinator:
                 if self._last_exchange_resolved_at > 0:
                     since_resolved = time.time() - self._last_exchange_resolved_at
                     if since_resolved < self._post_exchange_pause_secs:
+                        continue
+
+                # Don't call on anyone while presenter is still speaking
+                if self._last_transcript_time > 0:
+                    since_last_transcript = time.time() - self._last_transcript_time
+                    if since_last_transcript < self._presenter_silence_secs:
                         continue
 
                 async with self._hand_raise_lock:
@@ -1226,42 +1240,32 @@ class SessionCoordinator:
         text: str,
         entry_type: str = "question",
     ) -> None:
-        """Store a transcript entry in the database."""
+        """Store a transcript entry to session folder JSONL."""
         try:
-            from app.models.base import async_session_factory
-            from app.models.transcript import TranscriptEntry
+            entry_index = int(self._elapsed_seconds() * 1000)
+            if agent_id == "presenter":
+                speaker, speaker_name, agent_role = "presenter", "Presenter", "Presenter"
+            elif agent_id == "moderator":
+                speaker = "moderator"
+                speaker_name = AGENT_NAMES.get(agent_id, agent_id)
+                agent_role = AGENT_ROLES.get(agent_id)
+            else:
+                speaker = f"agent_{agent_id}"
+                speaker_name = AGENT_NAMES.get(agent_id, agent_id)
+                agent_role = AGENT_ROLES.get(agent_id)
 
-            async with async_session_factory() as db:
-                # Use elapsed milliseconds as entry_index to avoid collisions
-                # across concurrent writers (coordinator + multiple runners)
-                entry_index = int(self._elapsed_seconds() * 1000)
-                if agent_id == "presenter":
-                    speaker = "presenter"
-                    speaker_name = "Presenter"
-                    agent_role = "Presenter"
-                elif agent_id == "moderator":
-                    speaker = "moderator"
-                    speaker_name = AGENT_NAMES.get(agent_id, agent_id)
-                    agent_role = AGENT_ROLES.get(agent_id)
-                else:
-                    speaker = f"agent_{agent_id}"
-                    speaker_name = AGENT_NAMES.get(agent_id, agent_id)
-                    agent_role = AGENT_ROLES.get(agent_id)
-
-                entry = TranscriptEntry(
-                    session_id=self.session_id,
-                    entry_index=entry_index,
-                    speaker=speaker,
-                    speaker_name=speaker_name,
-                    agent_role=agent_role,
-                    text=text,
-                    start_time=self._elapsed_seconds(),
-                    end_time=self._elapsed_seconds(),
-                    slide_index=self.current_slide,
-                    entry_type=entry_type,
-                )
-                db.add(entry)
-                await db.commit()
+            entry = {
+                "entry_index": entry_index,
+                "speaker": speaker,
+                "speaker_name": speaker_name,
+                "agent_role": agent_role,
+                "text": text,
+                "start_time": self._elapsed_seconds(),
+                "end_time": self._elapsed_seconds(),
+                "slide_index": self.current_slide,
+                "entry_type": entry_type,
+            }
+            await self.session_logger.log_transcript_entry(entry)
         except Exception as e:
             logger.error(f"Failed to store transcript entry: {e}")
 

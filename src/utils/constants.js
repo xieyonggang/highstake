@@ -97,27 +97,6 @@ export const AGENTS = [
   },
 ];
 
-export const INTERACTION_MODES = [
-  {
-    id: 'section',
-    label: 'Section Breaks',
-    desc: 'Agents hold questions until you finish each section',
-    icon: '⏸',
-  },
-  {
-    id: 'hand-raise',
-    label: 'Hand Raise',
-    desc: 'Agents raise hands; you choose when to take questions',
-    icon: '✋',
-  },
-  {
-    id: 'interrupt',
-    label: 'Free Flow',
-    desc: 'Agents can interject naturally, like a real boardroom',
-    icon: '💬',
-  },
-];
-
 export const INTENSITY_LEVELS = [
   { id: 'friendly', label: 'Friendly Dry Run', desc: 'Supportive, constructive feedback', emoji: '😊' },
   { id: 'moderate', label: 'Moderate Challenge', desc: 'Balanced pushback with support', emoji: '🤔' },

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { AGENTS, INTERACTION_MODES, DEMO_SLIDES } from '../utils/constants';
+import { AGENTS, DEMO_SLIDES } from '../utils/constants';
 import { useSessionStore } from '../stores/sessionStore';
 import { useMeetingStore } from '../stores/meetingStore';
 import { connectSocket, disconnectSocket } from '../services/socket';
@@ -444,10 +444,6 @@ export default function MeetingPhase() {
           </button>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-gray-500 text-xs">
-            {INTERACTION_MODES.find((m) => m.id === config.interaction)?.icon}{' '}
-            {INTERACTION_MODES.find((m) => m.id === config.interaction)?.label}
-          </span>
           <button
             onClick={handleMuteToggle}
             className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${

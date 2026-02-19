@@ -860,28 +860,21 @@ class AgentRunner:
     async def _store_transcript_entry(
         self, text: str, entry_type: str = "question"
     ) -> None:
-        """Store a transcript entry in the database."""
+        """Store a transcript entry to session folder markdown."""
         try:
-            from app.models.base import async_session_factory
-            from app.models.transcript import TranscriptEntry
-
-            async with async_session_factory() as db:
-                # Use elapsed milliseconds as entry_index to avoid collisions
-                # across concurrent writers (coordinator + multiple runners)
-                entry_index = int(self._elapsed_seconds() * 1000)
-                entry = TranscriptEntry(
-                    session_id=self.session_id,
-                    entry_index=entry_index,
-                    speaker=f"agent_{self.agent_id}",
-                    speaker_name=AGENT_NAMES.get(self.agent_id, self.agent_id),
-                    agent_role=AGENT_ROLES.get(self.agent_id),
-                    text=text,
-                    start_time=self._elapsed_seconds(),
-                    end_time=self._elapsed_seconds(),
-                    slide_index=self.observation.current_slide,
-                    entry_type=entry_type,
-                )
-                db.add(entry)
-                await db.commit()
+            entry_index = int(self._elapsed_seconds() * 1000)
+            entry = {
+                "entry_index": entry_index,
+                "speaker": f"agent_{self.agent_id}",
+                "speaker_name": AGENT_NAMES.get(self.agent_id, self.agent_id),
+                "agent_role": AGENT_ROLES.get(self.agent_id),
+                "text": text,
+                "start_time": self._elapsed_seconds(),
+                "end_time": self._elapsed_seconds(),
+                "slide_index": self.observation.current_slide,
+                "entry_type": entry_type,
+            }
+            if self._session_logger:
+                await self._session_logger.log_transcript_entry(entry)
         except Exception as e:
             logger.error(f"Failed to store transcript entry: {e}")

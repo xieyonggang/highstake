@@ -1,13 +1,10 @@
 import io
+import json
 import logging
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Optional
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.deck import Deck, Slide
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +14,9 @@ class DeckParserService:
         self,
         file_bytes: bytes,
         filename: str,
-        db: AsyncSession,
         session_id: str | None = None,
     ) -> dict:
-        """Full pipeline: parse file, generate thumbnails, store in DB.
+        """Full pipeline: parse file, generate thumbnails, write manifest.json.
 
         If session_id is provided, files are stored directly in the session
         folder at sessions/{session_id}/decks/{deck_id}/ instead of decks/{deck_id}/.
@@ -74,61 +70,44 @@ class DeckParserService:
                 "text/markdown",
             )
 
-            # Create DB records
-            deck = Deck(
-                id=deck_id,
-                filename=filename,
-                file_size_bytes=len(file_bytes),
-                file_key=file_key,
-                total_slides=len(slides_data),
-                manifest={
-                    "id": str(deck_id),
-                    "filename": filename,
-                    "totalSlides": len(slides_data),
-                    "slides": slides_data,
-                },
+            # Build manifest with direct file URLs for thumbnails
+            slides_out = []
+            for s in slides_data:
+                slides_out.append({
+                    "index": s["index"],
+                    "title": s.get("title"),
+                    "subtitle": s.get("subtitle"),
+                    "body_text": s.get("body_text"),
+                    "notes": s.get("notes"),
+                    "has_chart": s.get("has_chart", False),
+                    "has_table": s.get("has_table", False),
+                    "thumbnail_url": (
+                        f"/api/files/{prefix}/thumbnails/{s['index']}.png"
+                        if s.get("thumbnail_key")
+                        else None
+                    ),
+                })
+
+            manifest = {
+                "id": deck_id,
+                "filename": filename,
+                "totalSlides": len(slides_data),
+                "slides": slides_out,
+            }
+
+            # Write manifest.json to storage
+            manifest_key = f"{prefix}/manifest.json"
+            await storage.upload(
+                manifest_key,
+                json.dumps(manifest, indent=2).encode(),
+                "application/json",
             )
-            db.add(deck)
-
-            for slide_data in slides_data:
-                slide = Slide(
-                    deck_id=deck_id,
-                    slide_index=slide_data["index"],
-                    title=slide_data.get("title"),
-                    subtitle=slide_data.get("subtitle"),
-                    body_text=slide_data.get("body_text"),
-                    notes=slide_data.get("notes"),
-                    has_chart=slide_data.get("has_chart", False),
-                    has_table=slide_data.get("has_table", False),
-                    thumbnail_key=slide_data.get("thumbnail_key"),
-                )
-                db.add(slide)
-
-            await db.flush()
-            await db.refresh(deck)
 
             return {
                 "id": deck_id,
                 "filename": filename,
                 "total_slides": len(slides_data),
-                "slides": [
-                    {
-                        "index": s["index"],
-                        "title": s.get("title"),
-                        "subtitle": s.get("subtitle"),
-                        "body_text": s.get("body_text"),
-                        "notes": s.get("notes"),
-                        "has_chart": s.get("has_chart", False),
-                        "has_table": s.get("has_table", False),
-                        "thumbnail_url": (
-                            f"/api/decks/{deck_id}/slides/{s['index']}"
-                            if s.get("thumbnail_key")
-                            else None
-                        ),
-                    }
-                    for s in slides_data
-                ],
-                "created_at": deck.created_at,
+                "slides": slides_out,
             }
 
     def _parse_pptx(self, file_path: Path) -> list[dict]:

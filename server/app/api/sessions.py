@@ -1,103 +1,59 @@
-from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException, UploadFile, File
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.base import get_db
-from app.models.session import Session, SessionStatus
+from app.models.session import SessionStatus
 from app.schemas.session import SessionCreate, SessionResponse, SessionUpdate
+from app.services.session_store import (
+    create_session as store_create,
+    read_session as store_read,
+    update_session as store_update,
+    delete_session as store_delete,
+)
 
 router = APIRouter()
 
 
 @router.post("/", response_model=SessionResponse, status_code=201)
-async def create_session(
-    payload: SessionCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    session = Session(
-        interaction_mode=payload.interaction_mode,
-        intensity=payload.intensity,
-        agents=payload.agents,
-        focus_areas=payload.focus_areas,
-        deck_id=payload.deck_id,
-        status=SessionStatus.CONFIGURING.value,
-    )
-    db.add(session)
-    await db.flush()
-    await db.refresh(session)
+async def create_session(payload: SessionCreate):
+    session = store_create(payload.model_dump())
     return session
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
-async def get_session(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Session).where(Session.id == session_id))
-    session = result.scalar_one_or_none()
+async def get_session(session_id: str):
+    session = store_read(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
 
 
 @router.patch("/{session_id}", response_model=SessionResponse)
-async def update_session(
-    session_id: str,
-    payload: SessionUpdate,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Session).where(Session.id == session_id))
-    session = result.scalar_one_or_none()
+async def update_session(session_id: str, payload: SessionUpdate):
+    updates = payload.model_dump(exclude_unset=True)
+
+    if "status" in updates and updates["status"] is not None:
+        try:
+            updates["status"] = SessionStatus(updates["status"]).value
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid status: {updates['status']}")
+
+    session = store_update(session_id, updates)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    if payload.status is not None:
-        try:
-            session.status = SessionStatus(payload.status).value
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {payload.status}")
-    if payload.interaction_mode is not None:
-        session.interaction_mode = payload.interaction_mode
-    if payload.intensity is not None:
-        session.intensity = payload.intensity
-    if payload.agents is not None:
-        session.agents = payload.agents
-    if payload.deck_id is not None:
-        session.deck_id = payload.deck_id
-    if payload.started_at is not None:
-        session.started_at = payload.started_at
-    if payload.ended_at is not None:
-        session.ended_at = payload.ended_at
-    if payload.duration_secs is not None:
-        session.duration_secs = payload.duration_secs
-
-    await db.flush()
-    await db.refresh(session)
     return session
 
 
 @router.delete("/{session_id}", status_code=204)
-async def delete_session(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(select(Session).where(Session.id == session_id))
-    session = result.scalar_one_or_none()
-    if not session:
+async def delete_session(session_id: str):
+    if not store_delete(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    await db.delete(session)
 
 
 @router.post("/{session_id}/recording")
 async def upload_recording(
     session_id: str,
     recording: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Session).where(Session.id == session_id))
-    session = result.scalar_one_or_none()
+    session = store_read(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -108,7 +64,5 @@ async def upload_recording(
     file_bytes = await recording.read()
     await storage.upload(recording_key, file_bytes, recording.content_type or "video/webm")
 
-    session.recording_key = recording_key
-    await db.flush()
-
+    store_update(session_id, {"recording_key": recording_key})
     return {"recording_key": recording_key}

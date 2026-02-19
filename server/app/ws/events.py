@@ -1,5 +1,7 @@
 import base64
+import json
 import logging
+import os
 import time
 import asyncio
 
@@ -245,39 +247,36 @@ async def initialize_agent_engine(session_id: str):
             return
 
         from app.config import settings
-        from app.models.base import async_session_factory
-        from app.models.session import Session
-        from app.models.deck import Deck
-        from sqlalchemy import select
+        from app.services.session_store import read_session
 
         if not settings.gemini_api_key:
             logger.warning(f"No Gemini API key. Agent engine disabled for session {session_id}")
             return
 
         try:
-            async with async_session_factory() as db:
-                result = await db.execute(
-                    select(Session).where(Session.id == session_id)
-                )
-                session = result.scalar_one_or_none()
-                if not session:
-                    return
+            session = read_session(session_id)
+            if not session:
+                return
 
-                deck_manifest = None
-                pre_extracted_claims = None
-                if session.deck_id:
-                    deck_result = await db.execute(
-                        select(Deck).where(Deck.id == session.deck_id)
-                    )
-                    deck = deck_result.scalar_one_or_none()
-                    if deck:
-                        deck_manifest = deck.manifest
-                        pre_extracted_claims = deck.claims_json
+            deck_manifest = None
+            pre_extracted_claims = None
+            if session.get("deck_id"):
+                deck_dir = os.path.join(
+                    settings.storage_dir, "sessions", session_id,
+                    "decks", session["deck_id"],
+                )
+                manifest_path = os.path.join(deck_dir, "manifest.json")
+                if os.path.exists(manifest_path):
+                    with open(manifest_path) as f:
+                        deck_manifest = json.load(f)
+                claims_path = os.path.join(deck_dir, "claims.json")
+                if os.path.exists(claims_path):
+                    with open(claims_path) as f:
+                        pre_extracted_claims = json.load(f)
 
             from app.services.llm_client import LLMClient
             from app.services.tts_service import get_tts_service
             from app.services.agent_engine import SessionCoordinator
-            from app.services.live_transcription import LiveTranscriptionService
 
             llm = LLMClient(settings.gemini_api_key)
             tts = get_tts_service()
@@ -288,10 +287,10 @@ async def initialize_agent_engine(session_id: str):
             coordinator = SessionCoordinator(
                 session_id=session_id,
                 config={
-                    "interaction_mode": session.interaction_mode,
-                    "intensity": session.intensity,
-                    "agents": session.agents,
-                    "focus_areas": session.focus_areas,
+                    "interaction_mode": session["interaction_mode"],
+                    "intensity": session["intensity"],
+                    "agents": session["agents"],
+                    "focus_areas": session.get("focus_areas", []),
                 },
                 deck_manifest=deck_manifest or {},
                 llm_client=llm,

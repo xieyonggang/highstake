@@ -29,12 +29,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Auto-create tables on startup (SQLite — no migration step needed)
-    from app.models.base import init_db
-    await init_db()
-    logger.info("Database tables created / verified")
-
-    # Ensure storage directory exists
     os.makedirs(settings.storage_dir, exist_ok=True)
     yield
 

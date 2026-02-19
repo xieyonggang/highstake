@@ -170,6 +170,303 @@ class SessionLogger:
                 except Exception as e:
                     logger.debug(f"Failed to copy {md_file} -> {dest_path}: {e}")
 
+    # --- Structured file I/O (transcript.md, debrief.md) ---
+
+    async def log_transcript_entry(self, entry: dict) -> None:
+        """Append a structured transcript entry to transcript.md.
+
+        Format per entry:
+            #### [MM:SS.mmm] Speaker Name
+            - speaker: <id>
+            - role: <role>
+            - type: <entry_type>
+            - slide: <index>
+            - index: <entry_index>
+            - start: <float>
+            - end: <float>
+
+            <text>
+
+            ---
+        """
+        elapsed = entry.get("start_time", 0)
+        m, s = divmod(int(elapsed), 60)
+        ms = int((elapsed - int(elapsed)) * 1000)
+        time_str = f"{m:02d}:{s:02d}.{ms:03d}"
+
+        block = (
+            f"#### [{time_str}] {entry.get('speaker_name', 'Unknown')}\n"
+            f"- speaker: {entry.get('speaker', '')}\n"
+            f"- role: {entry.get('agent_role', '')}\n"
+            f"- type: {entry.get('entry_type', '')}\n"
+            f"- slide: {entry.get('slide_index', 0)}\n"
+            f"- index: {entry.get('entry_index', 0)}\n"
+            f"- start: {entry.get('start_time', 0)}\n"
+            f"- end: {entry.get('end_time', 0)}\n"
+            f"\n{entry.get('text', '')}\n\n---\n"
+        )
+        await self._append("transcript.md", block)
+
+    @staticmethod
+    def read_transcript_entries(session_dir: str) -> list[dict]:
+        """Read all transcript entries from transcript.md."""
+        import re
+
+        path = os.path.join(session_dir, "transcript.md")
+        if not os.path.exists(path):
+            return []
+
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+
+        entries = []
+        # Split on --- dividers, each block is one entry
+        blocks = content.split("\n---\n")
+        for block in blocks:
+            block = block.strip()
+            if not block or "#### [" not in block:
+                continue
+
+            entry = {}
+            lines = block.split("\n")
+
+            # Parse heading: #### [MM:SS.mmm] Speaker Name
+            heading_match = re.match(r"^####\s+\[[\d:.]+\]\s+(.+)$", lines[0])
+            if heading_match:
+                entry["speaker_name"] = heading_match.group(1).strip()
+
+            # Parse metadata lines
+            text_lines = []
+            in_metadata = True
+            for line in lines[1:]:
+                if in_metadata and re.match(r"^- \w+: ", line):
+                    key, _, val = line[2:].partition(": ")
+                    key = key.strip()
+                    val = val.strip()
+                    if key in ("slide", "index"):
+                        entry[f"slide_index" if key == "slide" else "entry_index"] = int(val)
+                    elif key in ("start", "end"):
+                        entry[f"{key}_time"] = float(val)
+                    elif key == "role":
+                        entry["agent_role"] = val
+                    elif key == "type":
+                        entry["entry_type"] = val
+                    else:
+                        entry[key] = val
+                else:
+                    in_metadata = False
+                    if line.strip():
+                        text_lines.append(line)
+
+            entry["text"] = "\n".join(text_lines).strip()
+            if entry.get("text") or entry.get("speaker"):
+                entries.append(entry)
+
+        entries.sort(key=lambda e: e.get("entry_index", 0))
+        return entries
+
+    async def write_debrief(self, data: dict) -> None:
+        """Write debrief data to debrief.md as structured markdown."""
+        scores = data.get("scores", {})
+        strengths = data.get("strengths", [])
+        coaching_items = data.get("coaching_items", [])
+        challenges = data.get("unresolved_challenges")
+        exchange_data = data.get("exchange_data")
+
+        lines = [
+            f"# Session Debrief",
+            f"",
+            f"- session_id: {data.get('session_id', '')}",
+            f"",
+            f"## Scores",
+            f"",
+        ]
+        for k, v in scores.items():
+            lines.append(f"- {k}: {v}")
+
+        lines += ["", "## Moderator Summary", ""]
+        lines.append(data.get("moderator_summary", ""))
+
+        if strengths:
+            lines += ["", "## Strengths", ""]
+            for s in strengths:
+                lines.append(f"- {s}")
+
+        if coaching_items:
+            lines += ["", "## Coaching Items", ""]
+            for item in coaching_items:
+                if isinstance(item, dict):
+                    lines.append(f"### {item.get('area', 'General')}")
+                    lines.append(f"- priority: {item.get('priority', 'medium')}")
+                    lines.append(f"- detail: {item.get('detail', '')}")
+                    if item.get("timestamp_ref") is not None:
+                        lines.append(f"- timestamp_ref: {item['timestamp_ref']}")
+                    lines.append("")
+
+        if challenges:
+            lines += ["", "## Unresolved Challenges", ""]
+            for c in challenges:
+                if isinstance(c, dict):
+                    lines.append(f"### {c.get('agent_id', 'unknown')}")
+                    lines.append(f"- question: {c.get('question', '')}")
+                    if c.get("target_claim"):
+                        lines.append(f"- target_claim: {c['target_claim']}")
+                    if c.get("slide_index") is not None:
+                        lines.append(f"- slide_index: {c['slide_index']}")
+                    lines.append(f"- outcome: {c.get('outcome', '')}")
+                    lines.append(f"- turn_count: {c.get('turn_count', 0)}")
+                    lines.append("")
+
+        if exchange_data:
+            lines += ["", "## Exchange Data", ""]
+            lines.append(f"```json\n{json.dumps(exchange_data, ensure_ascii=False, indent=2)}\n```")
+
+        await self._write("debrief.md", "\n".join(lines) + "\n")
+
+    @staticmethod
+    def read_debrief(session_dir: str) -> Optional[dict]:
+        """Read debrief data from debrief.md."""
+        import re
+
+        path = os.path.join(session_dir, "debrief.md")
+        if not os.path.exists(path):
+            return None
+
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+
+        data: dict = {}
+
+        # Parse session_id
+        m = re.search(r"^- session_id: (.+)$", content, re.MULTILINE)
+        if m:
+            data["session_id"] = m.group(1).strip()
+            data["id"] = data["session_id"]
+
+        # Parse scores section
+        scores_match = re.search(
+            r"## Scores\n\n((?:- \w+: \S+\n)+)", content
+        )
+        if scores_match:
+            scores = {}
+            for line in scores_match.group(1).strip().split("\n"):
+                km = re.match(r"^- (\w+): (.+)$", line)
+                if km:
+                    key, val = km.group(1), km.group(2).strip()
+                    try:
+                        scores[key] = int(val)
+                    except ValueError:
+                        try:
+                            scores[key] = float(val)
+                        except ValueError:
+                            scores[key] = val if val != "None" else None
+            data["scores"] = scores
+
+        # Parse moderator summary
+        summary_match = re.search(
+            r"## Moderator Summary\n\n(.*?)(?=\n## |\Z)",
+            content,
+            re.DOTALL,
+        )
+        if summary_match:
+            data["moderator_summary"] = summary_match.group(1).strip()
+
+        # Parse strengths
+        strengths_match = re.search(
+            r"## Strengths\n\n((?:- .+\n)+)", content
+        )
+        if strengths_match:
+            data["strengths"] = [
+                line[2:].strip()
+                for line in strengths_match.group(1).strip().split("\n")
+                if line.startswith("- ")
+            ]
+        else:
+            data["strengths"] = []
+
+        # Parse coaching items
+        coaching_match = re.search(
+            r"## Coaching Items\n\n(.*?)(?=\n## |\Z)",
+            content,
+            re.DOTALL,
+        )
+        if coaching_match:
+            items = []
+            # Find all ### headings and their content
+            item_blocks = re.findall(
+                r"### (.+?)\n(.*?)(?=\n### |\Z)",
+                coaching_match.group(1),
+                re.DOTALL,
+            )
+            for area, body in item_blocks:
+                item: dict = {"area": area.strip()}
+                for bl in body.strip().split("\n"):
+                    bm = re.match(r"^- (\w+): (.+)$", bl)
+                    if bm:
+                        k, v = bm.group(1), bm.group(2).strip()
+                        if k == "timestamp_ref":
+                            try:
+                                item[k] = float(v)
+                            except ValueError:
+                                item[k] = None
+                        else:
+                            item[k] = v
+                if item.get("area"):
+                    items.append(item)
+            data["coaching_items"] = items
+        else:
+            data["coaching_items"] = []
+
+        # Parse unresolved challenges
+        challenges_match = re.search(
+            r"## Unresolved Challenges\n\n(.*?)(?=\n## |\Z)",
+            content,
+            re.DOTALL,
+        )
+        if challenges_match:
+            challenges = []
+            ch_blocks = re.findall(
+                r"### (.+?)\n(.*?)(?=\n### |\Z)",
+                challenges_match.group(1),
+                re.DOTALL,
+            )
+            for agent_id, body in ch_blocks:
+                ch: dict = {"agent_id": agent_id.strip()}
+                for bl in body.strip().split("\n"):
+                    bm = re.match(r"^- (\w+): (.+)$", bl)
+                    if bm:
+                        k, v = bm.group(1), bm.group(2).strip()
+                        if k == "turn_count":
+                            ch[k] = int(v)
+                        elif k == "slide_index":
+                            try:
+                                ch[k] = int(v)
+                            except ValueError:
+                                ch[k] = None
+                        else:
+                            ch[k] = v
+                if ch.get("agent_id"):
+                    challenges.append(ch)
+            data["unresolved_challenges"] = challenges if challenges else None
+        else:
+            data["unresolved_challenges"] = None
+
+        # Parse exchange data (JSON block)
+        exchange_match = re.search(
+            r"## Exchange Data\n\n```json\n(.*?)```",
+            content,
+            re.DOTALL,
+        )
+        if exchange_match:
+            try:
+                data["exchange_data"] = json.loads(exchange_match.group(1))
+            except json.JSONDecodeError:
+                data["exchange_data"] = None
+        else:
+            data["exchange_data"] = None
+
+        return data if data.get("session_id") else None
+
     # --- Convenience methods ---
 
     async def log_session_config(

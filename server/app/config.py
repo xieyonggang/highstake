@@ -2,9 +2,6 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Database (SQLite by default — no install required)
-    database_url: str = "sqlite+aiosqlite:///./highstake.db"
-
     # Gemini API (single key for LLM + TTS)
     gemini_api_key: str = ""
 

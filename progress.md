@@ -65,7 +65,7 @@
 | Immutable templates (persona, domain-knowledge) | Done | `agents/templates/{agent}/` — checked into git |
 | Session folder with agent context | Done | `data/sessions/{session_id}/` — created at session start |
 | Persona + domain-knowledge copied to session | Done | `session_logger.py` `copy_agent_templates()` |
-| Deck stored in session folder | Done | Uploaded to `sessions/{session_id}/decks/{deck_id}/` |
+| Deck stored in session folder | Done | Uploaded to `sessions/{session_id}/decks/{deck_id}/` with `manifest.json` + `claims.json` (no DB) |
 | Parsed slides saved as slides.md | Done | `deck_parser.py` `_build_slides_markdown()` |
 | Session created on page load | Done | `SetupPhase.jsx` creates session in useEffect |
 | Claims extraction from deck | Done | `claim_extractor.py` — LLM extracts claims per slide |
@@ -124,9 +124,9 @@
 |---------|--------|-------|
 | Dynamic scoring engine | Done | `scoring_engine.py` — based on transcript + exchange analysis |
 | Session finalizer (debrief generation) | Done | `session_finalizer.py` — generates scores, coaching, summary |
-| Presenter transcript stored in DB | Done | Presenter segments saved as `entry_type="presenter"` |
+| Presenter transcript stored in session folder | Done | Presenter segments saved to `transcript.md` (was DB, migrated to file) |
 | Full transcript in review phase | Done | ReviewPhase.jsx transcript tab |
-| Exchange data in debrief | Done | Debrief model has exchange columns |
+| Exchange data in debrief | Done | `debrief.md` in session folder (was DB, migrated to file) |
 | Webcam capture | Partial | MediaRecorder setup exists, recording upload API exists |
 | Session recording playback | Not Started | PRD US-6 — playback with timeline scrubbing |
 
@@ -242,3 +242,36 @@
 9. **COOLDOWN is now terminal** — Only entered on SESSION_ENDING. After an exchange, agents return directly to LISTENING (inter-question cooldown enforced by `_evaluate_should_ask` heuristic).
 10. **Removed dead SPEAKING state** — Was in the enum but never assigned anywhere.
 11. **Moved mic/camera controls to top bar** — Freed ~144px vertical space for deck display by removing bottom controls bar, SlideViewer header, and reducing padding.
+
+---
+
+## Session Summary — 2026-02-19 (DB → Session Folder Migration)
+
+### What was done:
+
+1. **Migrated transcript storage from DB to session folder** — `TranscriptEntry` table no longer written to; entries appended to `transcript.md` as structured markdown (parseable back into dicts)
+2. **Migrated debrief storage from DB to session folder** — `Debrief` table no longer written to; debrief written as `debrief.md` with structured sections (scores, coaching items, challenges, exchange data)
+3. **SessionLogger gains 4 new methods** — `log_transcript_entry()`, `read_transcript_entries()`, `write_debrief()`, `read_debrief()` — all using structured markdown format
+4. **AgentEngine + AgentRunner** — `_store_transcript_entry()` now writes to `SessionLogger.log_transcript_entry()` instead of DB
+5. **Session finalizer** — Reads transcript from `transcript.md`, writes debrief to `debrief.md` instead of DB
+6. **Debrief API** — `/sessions/{id}/debrief` and `/sessions/{id}/transcript` endpoints read from session folder files instead of DB queries
+7. **Session model cleanup** — Removed `transcript_entries` and `debrief` relationships from Session ORM model; removed `TranscriptEntry` and `Debrief` from `models/__init__.py`
+8. **Model files kept** — `models/transcript.py` and `models/debrief.py` left in place (unused but avoids migration issues)
+
+---
+
+## Session Summary — 2026-02-19 (Deck/Slide DB → File Migration)
+
+### What was done:
+
+1. **Deck parser writes manifest.json** — `deck_parser.py` no longer takes `db` param or writes `Deck`/`Slide` ORM records. Instead writes `manifest.json` to `sessions/{session_id}/decks/{deck_id}/`
+2. **Thumbnail URLs are direct file paths** — Changed from `/api/decks/{id}/slides/{index}` to `/api/files/{prefix}/thumbnails/{index}.png`
+3. **Claims written to claims.json** — `_extract_and_store_claims()` writes `claims.json` to deck folder instead of DB `claims_json` column
+4. **Removed dead deck API endpoints** — Removed `get_deck` and `get_slide_thumbnail` (frontend never called them)
+5. **Recording endpoint scans folder** — `/sessions/{id}/recording` scans `recordings/` directory instead of reading `session.recording_key` from DB
+6. **WS events read manifest+claims from files** — `initialize_agent_engine()` reads `manifest.json` and `claims.json` from disk instead of querying Deck table
+7. **Session finalizer reads manifest from file** — Replaced `session.deck.total_slides` and `session.deck.manifest` with file-based reads
+8. **Session model cleanup** — Removed `deck_id` FK constraint (kept as plain String), removed `deck` relationship
+9. **Models __init__ cleanup** — Removed `Deck`, `Slide` from imports/exports
+10. **DeckManifest schema** — Removed `created_at` field (no longer available without ORM)
+11. **Deck model file kept** — `models/deck.py` left in place (unused but avoids migration issues), removed `sessions` back_populates

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { AGENTS, INTERACTION_MODES, INTENSITY_LEVELS } from '../utils/constants';
+import { AGENTS, INTENSITY_LEVELS } from '../utils/constants';
 import { useSessionStore } from '../stores/sessionStore';
 import { uploadDeck, createSession } from '../services/api';
 
@@ -105,29 +105,6 @@ export default function SetupPhase() {
             Session Setup
           </h1>
           <p className="text-gray-500 text-sm mt-2">Configure your boardroom session and jump in.</p>
-        </div>
-
-        {/* Interaction Mode */}
-        <div className="mb-5">
-          <label className="text-gray-500 text-xs font-semibold tracking-wider uppercase mb-2 block">
-            Interaction Mode
-          </label>
-          <div className="flex gap-2">
-            {INTERACTION_MODES.map((mode) => (
-              <button
-                key={mode.id}
-                onClick={() => setConfig({ ...config, interaction: mode.id })}
-                className={`flex-1 px-3 py-2.5 rounded-xl border text-center transition-all ${
-                  config.interaction === mode.id
-                    ? 'bg-blue-50 border-blue-400 shadow-md shadow-blue-100'
-                    : 'bg-white border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
-                }`}
-              >
-                <div className="text-lg mb-0.5">{mode.icon}</div>
-                <div className="text-gray-800 text-xs font-semibold">{mode.label}</div>
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* Intensity */}
@@ -268,7 +245,7 @@ export default function SetupPhase() {
         {/* Start Button */}
         <button
           onClick={handleStart}
-          disabled={!config.interaction || !config.intensity || isUploading || isStarting || !sessionId}
+          disabled={!config.intensity || isUploading || isStarting || !sessionId}
           className="w-full py-3.5 rounded-xl text-sm font-bold bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-30 transition-all shadow-lg shadow-blue-200"
         >
           {isStarting ? 'Starting...' : 'Enter the Boardroom'}
